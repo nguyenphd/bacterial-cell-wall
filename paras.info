@@ -1,0 +1,47 @@
+! This is the parameters file.
+! We define the energy Unit E0 = 1E-20 Joules.
+! Here we define a Length_Unit L0 = 1 nm.
+
+! KC use Young modulus = 30 MPa for glycan. Because Young_Mod = Stress*Length/Delta_Length.
+! Then Spring constant K = Young_Mod*Cross_Section_Area/Length.
+! Estimate Cross_Sec = 0.1 nm * 0.1 nm = 1E-2 nm**2
+! Young_Mod = 30 MPa = 3E7 * J/m**3 = 3E7 J/(1E27*nm**3) = 3E-20 J/nm**3
+! Length = N_L (nm)
+! Spring_Cons K = 3E-22/N_L J/nm**2 = 3E-2/N_L * E0/L0**2
+! 
+! KC's peptide constant K = 1E-2 N/m = 1E-20 J/nm**2 = 1.0 E0/L0**2 for length =1 nm.
+! KC's glycan constant K = 5.0 E0/L0**2 for length = 2 nm.
+
+! JC all-atom MD parameter for glycan: Kg=383 E0/L0^2, bond_length= 2.03 L0
+! Here we use a Worm-like chain model for peptide: F = -(K_b*T/P)*(1/(4(1-x/L_c)**2)-1/4+x/L_c)
+! where P is the persistence length ~ 0.313 nm. L_c is the contour length ~ 3.55 nm.
+! Then the stiffness is define: K = K_b*T/P/L_c = 0.372 E0
+
+! bonds are in the following format:
+! Type    bond_length    stiffness
+Bonds
+Gly-Gly   2.00500      557.00000    
+Gly-Pep   3.800000       1.49    
+
+! Persistance Length P = 10 nm = 10.0 L0
+! Bending stiffness K_thet = K_B*T*P/(2*L) where K_B is the Boltzmann constant.
+! T=300 Kelvins.
+! K_thet = 2.07E-20/N_L  (J) = 2.07/N_L * E0
+! KC's bending stiffness = 10 pNnm = 1.0 E0 for length = 1 L0
+
+! angles are in format:
+! Type   theta_zero   stiffness
+! JC's all-atom MD parameter: k_theta=4.18E0
+Angles
+Gly-Gly-Gly         180.00   8.36000000    
+Gly-Gly-Pep          90.0    0.00100000    
+
+
+! Pressure = 1 atm = 1E5 J/m**3 = 1E-22 J/nm**3 = 0.01 E0/L0**3 
+Pressure
+     0.03000    
+
+! Here temperature is to calculate for K_B * T which is the thermal energy.
+! If T = 300 K, then K_B * T = 0.414 E0
+Temperature
+300.0

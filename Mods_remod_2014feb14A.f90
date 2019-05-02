@@ -1,0 +1,12642 @@
+Module mods_remod
+
+
+contains
+
+!=======================================================================
+   SUBROUTINE SETINFO(JOBID,NCYL,NUNIT,LAVE,GMODE,LEFTCELL,RITECELL)   
+
+   IMPLICIT NONE
+   INTEGER JOBID,NCYL,NUNIT,LAVE,GMODE,LEFTCELL,RITECELL
+   CHARACTER (len=100) CHARA
+
+   OPEN(1,FILE='inputPG.info')
+
+2  FORMAT(A50)
+
+3  READ(1,2)CHARA
+   IF(CHARA(1:4)/='JOBI')THEN
+      GOTO 3
+   END IF
+   READ(1,*)JOBID
+
+4  READ(1,2)CHARA
+   IF(CHARA(1:4)/='NCYL')THEN
+      GOTO 4
+   END IF
+   READ(1,*)NCYL
+
+5  READ(1,2)CHARA
+   IF(CHARA(1:5)/='NUNIT')THEN
+      GOTO 5
+   END IF
+   READ(1,*)NUNIT
+
+7  READ(1,2)CHARA
+   IF(CHARA(1:4)/='LAVE')THEN
+      GOTO 7
+   END IF
+   READ(1,*)LAVE
+
+9  READ(1,2)CHARA
+   IF(CHARA(1:4)/='GMOD')THEN
+      GOTO 9
+   END IF
+   READ(1,*)GMODE
+
+11 READ(1,2)CHARA
+   IF(CHARA(1:4)/='LEFT')THEN
+      GOTO 11
+   END IF
+   READ(1,*)LEFTCELL
+
+13 READ(1,2)CHARA
+   IF(CHARA(1:4)/='RITE')THEN
+      GOTO 13
+   END IF
+   READ(1,*)RITECELL
+
+   CLOSE(1)
+
+   END SUBROUTINE
+!=======================================================================
+
+   SUBROUTINE ESTRAND(ENGGLY,FXGLY,FYGLY,FZGLY,ENGTHETA,FXTHETA,FYTHETA,FZTHETA, &
+                        NPG,PGID,PGLEN,PGTYP,X,Y,Z,LBOND,KBOND,THET0,KTHETA,JFORCE)
+
+   IMPLICIT NONE
+
+   DOUBLE PRECISION pi
+   DOUBLE PRECISION ENGGLY,ENGTHETA,LBOND,KBOND,THET0,KTHETA
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: FXGLY,FYGLY,FZGLY,FXTHETA,FYTHETA,FZTHETA
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: X,Y,Z
+
+   INTEGER NPG,JFORCE
+   INTEGER,DIMENSION(:,:),ALLOCATABLE::PGID
+   INTEGER,DIMENSION(:),ALLOCATABLE:: PGLEN,PGTYP
+
+   INTEGER N,I,NI,NJ,NK
+
+   DOUBLE PRECISION XI,XJ,XK,YI,YJ,YK,ZI,ZJ,ZK,DX,DY,DZ,DX1,DY1,DZ1,REP,DREP,DIST,DIST1,DISTREP
+   DOUBLE PRECISION ARG,THET,E,E0,F,DELTA,BETA
+   DOUBLE PRECISION DFXNJ,DFYNJ,DFZNJ,DFXNK,DFYNK,DFZNK
+
+
+   pi = 3.141592653589793239D0
+   DELTA=0.000001D0; BETA=0.00000000000001D0
+
+   IF(JFORCE==1)THEN
+      FXTHETA=0.0D0; FYTHETA=0.0D0; FZTHETA=0.0D0
+   END IF
+
+
+!$OMP PARALLEL &
+!$OMP DEFAULT(NONE) &
+!$OMP PRIVATE(N,I,NI,NJ,NK) &
+!$OMP PRIVATE(XI,XJ,XK,YI,YJ,YK,ZI,ZJ,ZK,DX,DY,DZ,DX1,DY1,DZ1,REP,DREP,DIST,DIST1,DISTREP) &
+!$OMP PRIVATE(ARG,THET,E,E0,F,DFXNJ,DFYNJ,DFZNJ,DFXNK,DFYNK,DFZNK) &
+!$OMP SHARED(NPG,JFORCE,LBOND,KBOND,THET0,KTHETA,DELTA,BETA) &
+!$OMP SHARED(FXGLY,FYGLY,FZGLY,FXTHETA,FYTHETA,FZTHETA,X,Y,Z,PGID,PGLEN,PGTYP) &
+!$OMP REDUCTION(+:ENGGLY,ENGTHETA)
+
+!$OMP DO SCHEDULE(GUIDED,64)
+
+   DO N=1,NPG
+
+      DO I=1,PGLEN(N)
+
+         IF(I==PGLEN(N).AND.PGTYP(N)/=0)THEN
+            EXIT
+         END IF
+
+         NI=PGID(I,N)
+
+! -- CALCULATE GLYCAN BONDS:
+         IF(I<PGLEN(N))THEN
+            NJ=PGID(I+1,N)
+         ELSE
+            NJ=PGID(1,N)
+         END IF
+
+         XI=X(NI)
+         YI=Y(NI)
+         ZI=Z(NI)
+
+         XJ=X(NJ)
+         YJ=Y(NJ)
+         ZJ=Z(NJ)
+
+         DX=XI-XJ
+         DY=YI-YJ
+         DZ=ZI-ZJ
+
+         DIST=SQRT(DX**2+DY**2+DZ**2)
+
+         ENGGLY=ENGGLY+KBOND*(DIST-LBOND)**2/2.0D0
+
+         F=KBOND*(DIST-LBOND)
+
+         FXGLY(NI)=FXGLY(NI)-F*DX/DIST
+         FYGLY(NI)=FYGLY(NI)-F*DY/DIST
+         FZGLY(NI)=FZGLY(NI)-F*DZ/DIST
+
+         FXGLY(NJ)=FXGLY(NJ)+F*DX/DIST
+         FYGLY(NJ)=FYGLY(NJ)+F*DY/DIST
+         FZGLY(NJ)=FZGLY(NJ)+F*DZ/DIST
+
+
+! --- CALCULATE ANGLE TERMS:
+
+         IF(I==1.AND.PGTYP(N)/=0)THEN
+            CYCLE
+         END IF
+
+         IF(I==1)THEN
+            NK=PGID(PGLEN(N),N)
+         ELSE
+            NK=PGID(I-1,N)
+         END IF
+
+         XK=X(NK)
+         YK=Y(NK)
+         ZK=Z(NK)
+
+         DX1=XI-XK
+         DY1=YI-YK
+         DZ1=ZI-ZK
+
+         DIST1=SQRT(DX1**2+DY1**2+DZ1**2)
+
+         ARG=(DX*DX1+DY*DY1+DZ*DZ1)/DIST/DIST1
+
+         ARG=ARG*ABS(ARG)/(ABS(ARG)+BETA)
+
+         THET=ACOS(ARG)
+
+
+         E0=KTHETA*(THET-THET0)**2/2.0D0
+
+         ENGTHETA=ENGTHETA+E0
+
+! -- DETERMINE IF FORCE CALCULATION IS NEEDED:
+
+         IF(JFORCE==0)THEN
+            CYCLE
+         END IF
+
+!------ FORCE ON NJ ALONG X:
+
+         REP=XJ+DELTA
+         DREP=XI-REP
+         DISTREP=SQRT(DREP**2+DY**2+DZ**2)
+
+         ARG=(DREP*DX1+DY*DY1+DZ*DZ1)/DISTREP/DIST1
+         ARG=ARG*ABS(ARG)/(ABS(ARG)+BETA)
+
+         THET=ACOS(ARG)
+
+
+         E=KTHETA*(THET-THET0)**2/2.0D0
+
+         DFXNJ=(E0-E)/DELTA
+         FXTHETA(NJ)=FXTHETA(NJ)+DFXNJ
+
+
+!------ FORCE ON NJ ALONG Y:
+
+         REP=YJ+DELTA
+         DREP=YI-REP
+         DISTREP=SQRT(DX**2+DREP**2+DZ**2)
+
+         ARG=(DX*DX1+DREP*DY1+DZ*DZ1)/DISTREP/DIST1
+         ARG=ARG*ABS(ARG)/(ABS(ARG)+BETA)
+
+         THET=ACOS(ARG)
+
+
+         E=KTHETA*(THET-THET0)**2/2.0D0
+
+         DFYNJ=(E0-E)/DELTA
+         FYTHETA(NJ)=FYTHETA(NJ)+DFYNJ
+
+!------ FORCE ON NJ ALONG Z:
+
+         REP=ZJ+DELTA
+         DREP=ZI-REP
+         DISTREP=SQRT(DX**2+DY**2+DREP**2)
+
+         ARG=(DX*DX1+DY*DY1+DREP*DZ1)/DISTREP/DIST1
+         ARG=ARG*ABS(ARG)/(ABS(ARG)+BETA)
+   
+         THET=ACOS(ARG)
+
+         E=KTHETA*(THET-THET0)**2/2.0D0
+
+         DFZNJ=(E0-E)/DELTA
+         FZTHETA(NJ)=FZTHETA(NJ)+DFZNJ
+
+!------ FORCE ON NK ALONG X:
+
+         REP=XK+DELTA
+         DREP=XI-REP
+         DISTREP=SQRT(DREP**2+DY1**2+DZ1**2)
+
+         ARG=(DX*DREP+DY*DY1+DZ*DZ1)/DIST/DISTREP
+         ARG=ARG*ABS(ARG)/(ABS(ARG)+BETA)
+
+         THET=ACOS(ARG)
+
+         E=KTHETA*(THET-THET0)**2/2.0D0
+
+         DFXNK=(E0-E)/DELTA
+         FXTHETA(NK)=FXTHETA(NK)+DFXNK
+
+
+!------ FORCE ON NK ALONG Y:
+
+         REP=YK+DELTA
+         DREP=YI-REP
+         DISTREP=SQRT(DX1**2+DREP**2+DZ1**2)
+
+         ARG=(DX*DX1+DY*DREP+DZ*DZ1)/DIST/DISTREP
+         ARG=ARG*ABS(ARG)/(ABS(ARG)+BETA)
+
+         THET=ACOS(ARG)
+
+         E=KTHETA*(THET-THET0)**2/2.0D0
+
+         DFYNK=(E0-E)/DELTA
+         FYTHETA(NK)=FYTHETA(NK)+DFYNK
+
+!------ FORCE ON NK ALONG Z:
+
+         REP=ZK+DELTA
+         DREP=ZI-REP
+         DISTREP=SQRT(DX1**2+DY1**2+DREP**2)
+
+         ARG=(DX*DX1+DY*DY1+DZ*DREP)/DIST/DISTREP
+         ARG=ARG*ABS(ARG)/(ABS(ARG)+BETA)
+
+         THET=ACOS(ARG)
+
+         E=KTHETA*(THET-THET0)**2/2.0D0
+
+         DFZNK=(E0-E)/DELTA
+         FZTHETA(NK)=FZTHETA(NK)+DFZNK
+
+!------ FORCE ON NI ALONG X:
+
+         FXTHETA(NI)=FXTHETA(NI)-DFXNJ-DFXNK
+
+!------ FORCE ON NI ALONG Y:
+
+         FYTHETA(NI)=FYTHETA(NI)-DFYNJ-DFYNK
+
+!------ FORCE ON NI ALONG Z:
+
+         FZTHETA(NI)=FZTHETA(NI)-DFZNJ-DFZNK
+
+
+      END DO
+
+   END DO
+
+!$OMP END DO NOWAIT
+!$OMP END PARALLEL
+
+   END SUBROUTINE
+!========================================================================
+
+!---------------------------------------------------------------------------
+
+      SUBROUTINE EPEPBONDS(JFORCE,ENG,FX,FY,FZ,X,Y,Z,NBOND,BOND,LBOND,KBOND)
+
+
+      IMPLICIT NONE
+
+      DOUBLE PRECISION ENG
+      DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: FX,FY,FZ
+
+      DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: X,Y,Z
+      INTEGER NBOND
+      INTEGER,DIMENSION(:,:),ALLOCATABLE::BOND
+
+      INTEGER N,I,J,NI,NJ,JFORCE
+      DOUBLE PRECISION KBOND,LBOND,LSTART,LREP
+      DOUBLE PRECISION DX,DY,DZ,DIST,F
+      DOUBLE PRECISION XI,YI,ZI,XJ,YJ,ZJ
+      DOUBLE PRECISION KSWITCH,LSWITCH,MSWITCH,SLOPE,ESWITCH
+!---------------------------------------
+!      DELTA=0.0000000001D0
+
+      IF(JFORCE==1)THEN
+         FX=0.0D0; FY=0.0D0; FZ=0.0D0
+      END IF
+
+! -- ASSUME THERE IS NO FORCE FOR EXTENSION < CONTOUR LENGTH / 4. USE LREP INSTEAD OF LBOND:
+      LSTART=1.0D0
+
+      LREP=LBOND-LSTART
+
+! -- ALSO USE ALTERNATIVE BOND CONSTANT:
+!      KREP=KBOND*LBOND/LREP
+
+      LSWITCH=0.9D0*LREP
+
+      ESWITCH=KBOND*LSWITCH**2*(LREP/4.0D0/(LREP-LSWITCH)+0.5D0)
+
+      SLOPE=KBOND*(LREP/4.0D0/(1.0D0-LSWITCH/LREP)**2-LREP/4.0D0+LSWITCH)
+
+      KSWITCH=SLOPE/2.0D0/LSWITCH
+      MSWITCH=ESWITCH-KSWITCH*LSWITCH**2
+
+
+! BEFORE SWITCHING, POTENTIAL OF PEPTIDE: E(XBOND) = KBOND*XBOND**2*(1/2+1/4(1-XBOND/LBOND))
+! AFTER SWITCHING: E(XBOND)=KSWITCH*XBOND**2+MSWITCH
+
+
+
+      
+!$OMP parallel  &
+!$OMP DEFAULT(NONE) &
+!$OMP private(N,I,J,XI,YI,ZI,XJ,YJ,ZJ,DX,DY,DZ,DIST,F) &
+!$OMP shared(BOND,NBOND,X,Y,Z,FX,FY,FZ) &
+!$OMP SHARED(KBOND,LREP,LSTART,KSWITCH,LSWITCH,MSWITCH,JFORCE) &
+!$OMP reduction (+:ENG)
+
+!$OMP DO SCHEDULE(GUIDED,64)
+
+      DO N=1,NBOND
+
+         I=BOND(1,N)
+         J=BOND(2,N)
+
+         XI=X(I);YI=Y(I);ZI=Z(I)
+
+         XJ=X(J);YJ=Y(J);ZJ=Z(J)
+
+!       Calculate the distance between two ends of the bond:
+
+         DX=XI-XJ
+         DY=YI-YJ
+         DZ=ZI-ZJ
+
+         DIST=SQRT(DX**2+DY**2+DZ**2)-LSTART
+
+
+!       Energy of the peptide:
+
+         IF(DIST>0.0D0.AND.DIST<=LSWITCH)THEN
+            ENG=ENG+KBOND*DIST**2*(LREP/4.0D0/(LREP-DIST)+0.5D0)
+
+         ELSEIF(DIST>0.0D0.AND.DIST>LSWITCH)THEN
+            ENG=ENG+KSWITCH*DIST**2+MSWITCH
+         END IF
+
+
+         IF(JFORCE==0)THEN
+            CYCLE
+         END IF
+!-------------------------------------------
+
+         IF(DIST<0.0D0)THEN
+            F=0.0D0
+
+         ELSEIF(DIST<=LSWITCH)THEN
+
+            F=KBOND*(LREP/4.0D0/(1.0D0-DIST/LREP)**2-LREP/4.0D0+DIST)
+
+         ELSEIF(DIST>LSWITCH)THEN
+
+            F=2.0D0*KSWITCH*DIST
+
+         END IF
+
+         DIST=DIST+LSTART
+
+         FX(I)=-F*DX/DIST
+         FY(I)=-F*DY/DIST
+         FZ(I)=-F*DZ/DIST
+
+         FX(J)=F*DX/DIST
+         FY(J)=F*DY/DIST
+         FZ(J)=F*DZ/DIST
+
+
+   END DO
+
+!$OMP END DO NOWAIT
+!$OMP end parallel 
+
+      END SUBROUTINE
+
+!-----------------------------------------------------------------------------
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+!	This subroutine calculate energy and forces from pressure.
+
+ SUBROUTINE EPRES(JFORCE,NATOM,ENG,FX,FY,FZ,X,Y,Z,NLOOP,LOOP,LOOPLEN,PRES,VOLM,NTHREAD)
+
+      IMPLICIT NONE
+
+      INTEGER NATOM,JFORCE
+      DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: FX,FY,FZ
+      DOUBLE PRECISION ENG
+      DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: X,Y,Z
+      DOUBLE PRECISION PRES
+      DOUBLE PRECISION XCEN,YCEN,ZCEN
+      INTEGER,DIMENSION(:),ALLOCATABLE::LOOPLEN
+      INTEGER NLOOP
+      INTEGER,DIMENSION(:,:),ALLOCATABLE:: LOOP
+      DOUBLE PRECISION,DIMENSION(:,:),ALLOCATABLE:: FXREP,FYREP,FZREP
+      DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: RADI,VOLMREP
+
+      INTEGER I,J,N,NI,NJ,LENGTH,TID, OMP_GET_THREAD_NUM,NTHREAD
+
+      DOUBLE PRECISION X0,Y0,Z0,XI,YI,ZI,XJ,YJ,ZJ,DIST,DX,DY,DZ,RADIMEAN
+
+      DOUBLE PRECISION DELTA,V0,V,VOLM
+
+!-------------------------------------------------------------------------------
+! -- -PICK A SMALL NUMBER:
+      DELTA=0.000001D0
+
+!       First we locate the center of the cell:
+
+      XCEN=SUM(X(1:NATOM))/NATOM
+      YCEN=SUM(Y(1:NATOM))/NATOM
+      ZCEN=SUM(Z(1:NATOM))/NATOM
+
+      ALLOCATE(VOLMREP(NTHREAD))
+      VOLMREP=0.0D0
+
+! -- IF THERE IS A SIGNAL TO CALCULATE FORCES:
+
+      IF(JFORCE==1)THEN
+
+         ALLOCATE(FXREP(NTHREAD,NATOM),FYREP(NTHREAD,NATOM),FZREP(NTHREAD,NATOM))
+         FXREP=0.0D0; FYREP=0.0D0; FZREP=0.0D0
+
+      END IF
+
+
+
+!$OMP PARALLEL &
+!$OMP DEFAULT(NONE) &
+!$OMP PRIVATE(N,I,NI,NJ,X0,Y0,Z0,V0,V,TID) &
+!$OMP PRIVATE(XI,YI,ZI,XJ,YJ,ZJ,LENGTH) &
+!$OMP SHARED(FXREP,FYREP,FZREP,X,Y,Z,XCEN,YCEN,ZCEN,PRES,DELTA,NLOOP,LOOP,LOOPLEN,JFORCE) &
+!$OMP SHARED(NTHREAD,VOLMREP)
+
+!$OMP DO SCHEDULE(GUIDED,64)
+
+   DO N=1,NLOOP
+
+! --- THREAD ID:
+
+      TID=1
+
+      IF(NTHREAD>1)THEN
+         TID = OMP_GET_THREAD_NUM()
+         TID=TID+1
+      END IF
+
+
+      LENGTH=LOOPLEN(N)
+
+
+!       Center of the loop :
+
+      X0=0.0D0; Y0=0.0D0; Z0=0.0D0
+
+      DO I=1,LENGTH
+         X0=X0+X(LOOP(I,N))
+         Y0=Y0+Y(LOOP(I,N))
+         Z0=Z0+Z(LOOP(I,N))
+
+      END DO
+
+      X0=X0/LENGTH; Y0=Y0/LENGTH; Z0=Z0/LENGTH
+
+
+      DO I=1,LENGTH
+
+         NI=LOOP(I,N)
+
+         IF(I<LENGTH)THEN
+            NJ=LOOP(I+1,N)
+         ELSE
+            NJ=LOOP(1,N)
+         END IF
+
+         XI=X(NI);YI=Y(NI);ZI=Z(NI)
+         XJ=X(NJ);YJ=Y(NJ);ZJ=Z(NJ)
+
+!       Volume of the tetrahedron formed by I, J, tetragon
+!       center and cell center:
+
+         V0=VOL(XI,YI,ZI,XJ,YJ,ZJ,X0,Y0,Z0,XCEN,YCEN,ZCEN)
+
+         VOLMREP(TID)=VOLMREP(TID)+V0
+
+! --- FOR CALCULATION OF FORCES:
+
+         IF(JFORCE/=1)THEN
+            CYCLE
+         END IF
+
+! -- TO CALCULATE FORCE ON NI:
+
+         V=VOL(XI+DELTA,YI,ZI,XJ,YJ,ZJ,X0,Y0,Z0,XCEN,YCEN,ZCEN)
+
+         FXREP(TID,NI)=FXREP(TID,NI)+PRES*(V-V0)/DELTA
+
+         V=VOL(XI,YI+DELTA,ZI,XJ,YJ,ZJ,X0,Y0,Z0,XCEN,YCEN,ZCEN)
+
+         FYREP(TID,NI)=FYREP(TID,NI)+PRES*(V-V0)/DELTA
+
+         V=VOL(XI,YI,ZI+DELTA,XJ,YJ,ZJ,X0,Y0,Z0,XCEN,YCEN,ZCEN)
+
+         FZREP(TID,NI)=FZREP(TID,NI)+PRES*(V-V0)/DELTA
+
+
+! --  TO CALCULATE FORCE ON NJ:
+
+         V=VOL(XI,YI,ZI,XJ+DELTA,YJ,ZJ,X0,Y0,Z0,XCEN,YCEN,ZCEN)
+
+         FXREP(TID,NJ)=FXREP(TID,NJ)+PRES*(V-V0)/DELTA
+
+
+         V=VOL(XI,YI,ZI,XJ,YJ+DELTA,ZJ,X0,Y0,Z0,XCEN,YCEN,ZCEN)
+
+         FYREP(TID,NJ)=FYREP(TID,NJ)+PRES*(V-V0)/DELTA
+
+         V=VOL(XI,YI,ZI,XJ,YJ,ZJ+DELTA,X0,Y0,Z0,XCEN,YCEN,ZCEN)
+
+         FZREP(TID,NJ)=FZREP(TID,NJ)+PRES*(V-V0)/DELTA
+
+
+      END DO
+
+
+   END DO
+
+
+!$OMP END DO NOWAIT
+!$OMP END PARALLEL
+
+   VOLM=SUM(VOLMREP(1:NTHREAD))
+   DEALLOCATE(VOLMREP)
+
+   IF(JFORCE==1)THEN
+      DO N=1,NATOM
+         FX(N)=SUM(FXREP(1:NTHREAD,N))
+         FY(N)=SUM(FYREP(1:NTHREAD,N))
+         FZ(N)=SUM(FZREP(1:NTHREAD,N))
+      END DO
+
+      DEALLOCATE(FXREP,FYREP,FZREP)
+
+   END IF
+
+!       Update the energy of the system:
+
+   ENG=ENG-PRES*VOLM
+
+
+  END SUBROUTINE EPRES
+
+
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+!       This function calculates the volume of a tetrahedron
+!       formed of 4 points in space A, B, C and D.
+
+      DOUBLE PRECISION function vol(xA,yA,zA,xB,yB,zB,xC,yC,zC,xD,yD,zD)
+      DOUBLE PRECISION xA,yA,zA,xB,yB,zB,xC,yC,zC,xD,yD,zD
+      DOUBLE PRECISION Area,H,s
+      DOUBLE PRECISION a,b,c,d
+
+!       Consider A, B and C form a base of the tetrahedron which has
+!       area denoted as Area.
+!       To calculate the area of triangle ABC, we use a,b,c to denote
+!       the lengths of BC,AC,AB. 
+
+      a=sqrt((xB-xC)**2+(yB-yC)**2+(zB-zC)**2)
+      b=sqrt((xA-xC)**2+(yA-yC)**2+(zA-zC)**2)
+      c=sqrt((xB-xA)**2+(yB-yA)**2+(zB-zA)**2)
+
+!       The semiperimeter of the triangle is:
+
+      s=(a+b+c)/2.0D0
+
+!       And here is the area:
+
+      Area=sqrt(s*(s-a)*(s-b)*(s-c))
+
+!       The distance from D to the ABC plane is the height of the
+!       tetrahedron H.
+!       The ABC plane can be discribed as ax+by+cz+d=0.
+!       A normal vector to the plane can be written as n=(a,b,c).
+!       n can be calculated as a cross product of vectors AB and BC
+!       n = AB cross AC which give:
+
+      a=(yA-yB)*(zB-zC)-(zA-zB)*(yB-yC)
+      b=(zA-zB)*(xB-xC)-(xA-xB)*(zB-zC)
+      c=(xA-xB)*(yB-yC)-(yA-yB)*(xB-xC)
+
+!       We can find d by using a relation n dot (x-xA) = 0
+!       Then here it is:
+
+      d=-a*xA-b*yA-c*zA
+
+!       So the height of the tetrahedron is calculated using a formula
+!       in wolfram:
+
+      H=abs((a*xD+b*yD+c*zD+d)/sqrt(a**2+b**2+c**2))
+
+!       Volume of the tetrahedron is Area*Height/3
+
+      vol=Area*H/3.0D0
+
+!	We want to give volume the sign of n cross DA:
+
+      if(a*(xA-xD)+b*(yA-yD)+c*(zA-zD)<0.0d0)then
+         vol=-vol
+      end if
+
+      end function vol
+
+!cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+
+!ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+
+!cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+
+          SUBROUTINE init_random_seed()
+            INTEGER :: i, n, clock
+            INTEGER, DIMENSION(:), ALLOCATABLE :: seed
+
+            CALL RANDOM_SEED(size = n)
+            ALLOCATE(seed(n))
+
+            CALL SYSTEM_CLOCK(COUNT=clock)
+
+            seed = clock + 37 * (/ (i - 1, i = 1, n) /)
+            CALL RANDOM_SEED(PUT = seed)
+
+            DEALLOCATE(seed)
+          END SUBROUTINE
+
+
+!=================================================================
+
+   SUBROUTINE WRITECOOR(NATOM,X,Y,Z)
+      IMPLICIT NONE
+      DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: X,Y,Z
+      INTEGER NATOM
+
+   OPEN(1,FILE='coor0000.inp',FORM='UNFORMATTED')
+
+   WRITE(1)NATOM
+
+   WRITE(1)X(1:NATOM)
+   WRITE(1)Y(1:NATOM)
+   WRITE(1)Z(1:NATOM)
+
+
+   CLOSE(1)
+
+
+END SUBROUTINE WRITECOOR
+
+!------------------------------------------------------------
+
+   SUBROUTINE WRITEPDB(NATOM,X,Y,Z,NPG,PGID,PGLEN,PGTYP)
+
+      IMPLICIT NONE
+      DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: X,Y,Z
+      INTEGER NPG,NATOM
+      INTEGER,DIMENSION(:,:),ALLOCATABLE::PGID
+      INTEGER,DIMENSION(:),ALLOCATABLE::PGLEN,PGTYP
+      INTEGER NOUT,N,IPG,I,J,LENGTH
+      CHARACTER(8)TEX,TYP,RES,SEGID,RESNO,ATOM
+      DOUBLE PRECISION W1,W2
+
+   OPEN(1,FILE='PG0000.pdb')
+
+42 FORMAT(A6,I5,2X,A3,1X,A3,1X,I5,4X,3F8.3,2F6.2,6X,A4)
+52 FORMAT(A50)
+
+   TEX='ATOM'; W1=1.0D0; W2=0.0D0; RES='GLY'
+   TYP='LAM'
+   IPG=0; I=0
+
+43 IPG=IPG+1
+
+   J=0; LENGTH=PGLEN(IPG)
+
+   IF(PGTYP(IPG)==0)THEN
+      SEGID='CAP'
+   ELSEIF (PGTYP(IPG)==1)THEN
+      SEGID='ODD'
+   ELSEIF(PGTYP(IPG)==2)THEN
+      SEGID='EVE'
+   ELSE
+      SEGID='NEW'
+   END IF
+
+44 J=J+1
+   I=I+1
+
+      WRITE(1,42)TEX,I,TYP,RES,IPG,X(I),Y(I),Z(I),W1,W2,SEGID
+
+      IF(J<LENGTH)THEN          ! IF # 4
+         GOTO 44
+      END IF           ! END IF # 4
+
+      IF(IPG<NPG)THEN      !  IF # 5
+         GOTO 43
+      END IF             !  END IF # 5
+
+      TEX='END'
+      WRITE(1,52)TEX
+
+      CLOSE(1)
+
+
+END SUBROUTINE WRITEPDB
+
+!-----------------------------------------------------------------
+   SUBROUTINE OUTPUTS(NATOM,X,Y,Z,DNOR,ATOR,PEPDIR,NPG,PGID,PGLEN,PGTYP,PGDIR, &
+                      NBOND,NBONDGLY,NBONDPEP,BOND,BONDGLY,BONDPEP,BONTYP, &
+                      NLOOP,LOOP,LOOPLEN,LOOPTYP,NATOMCAP,PGCAP1,PGCAP2,RADIUS)
+
+      IMPLICIT NONE
+      DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: X,Y,Z
+      INTEGER NPG,NATOM
+      INTEGER,DIMENSION(:,:),ALLOCATABLE::PGID
+      INTEGER,DIMENSION(:),ALLOCATABLE::PGLEN,PGTYP,PGDIR,MATURE
+      INTEGER NBOND,NBONDGLY,NBONDPEP
+      INTEGER,DIMENSION(:,:),ALLOCATABLE::BOND,BONDGLY,BONDPEP
+      INTEGER,DIMENSION(:),ALLOCATABLE::BONTYP,DNOR,ATOR,PEPDIR
+      INTEGER NLOOP,NATOMCAP,PGCAP1,PGCAP2
+      INTEGER,DIMENSION(:,:),ALLOCATABLE::LOOP
+      INTEGER,DIMENSION(:),ALLOCATABLE::LOOPLEN,LOOPTYP
+
+      INTEGER N,N0,I,J,K
+      CHARACTER CHARA*512
+
+      CHARACTER (LEN=64) FILECOOR,FILECONFIG,FILEPSF,FILEPDB
+      CHARACTER ZERO*1,CHARID1*1,CHARID2*2,CHARID3*3,CHARID4*4
+
+      INTEGER J1,J2,J3,J4,J5,J6,J7,J8,J9
+      INTEGER IPG,NLINE,LENGTH
+      DOUBLE PRECISION CHARG,MASS,W1,W2,RADIUS
+      CHARACTER(8)TEX,TYP,RES,SEGID,RESNO,ATOM
+
+
+   WRITE(ZERO,'(I1)')0
+
+   FILECOOR='coor0000.inp'
+   FILEPDB='PG0000.pdb'
+   FILECONFIG='config0000.inp'
+
+   PRINT*,'-----------------------------------------------------------'
+
+   WRITE(*,*)
+!---------------------------------------------
+
+   OPEN(1,FILE=FILECOOR,FORM='UNFORMATTED')
+
+   WRITE(1)NATOM
+
+   WRITE(1)X(1:NATOM)
+   WRITE(1)Y(1:NATOM)
+   WRITE(1)Z(1:NATOM)
+
+   CLOSE(1)
+
+   PRINT*,'COORDINATES HAVE BEEN WRITTEN'
+
+!-------------------------------------------------------
+   OPEN(30,FILE=FILECONFIG)
+!----------------------------------------
+
+   WRITE(30,*)'ATOMS INPUT'
+
+   N=0
+   WRITE(30,*)NATOM,NATOM,N,N
+   WRITE(30,*)DNOR(1:NATOM)
+   WRITE(30,*)ATOR(1:NATOM)
+   WRITE(30,*)PEPDIR(1:NATOM)
+   WRITE(30,*)'END ATOMS'
+   WRITE(30,*)
+!-------------------------------
+
+   WRITE(30,*)'RESIDUES INPUT'
+
+!      First store number of residues and the maximun length of residues:
+
+   WRITE(30,*)NPG,NPG,MAXVAL(PGLEN(1:NPG))
+
+   DO I=1,NPG
+      LENGTH=PGLEN(I)
+      WRITE(30,*)LENGTH,PGTYP(I),PGDIR(I),PGID(1:LENGTH,I)
+   END DO
+
+   WRITE(30,*)'END RESIDUES'
+   WRITE(30,*)
+
+!-----------------------------------------------
+
+   WRITE(30,*)'BONDGLY INPUT'
+
+ 35   FORMAT(I6,4X,I6,4X,I6)
+      WRITE(30,*)NBONDGLY,NBONDGLY
+      DO N=1,NBONDGLY
+         WRITE(30,35)N,BONDGLY(1,N),BONDGLY(2,N)
+      END DO
+
+   WRITE(30,*)'END BONDGLY INPUT'
+   WRITE(30,*)
+!------------------------------------------
+!-----------------------------------------------
+
+   WRITE(30,*)'BONDPEP INPUT'
+
+   N=0
+
+ 36   FORMAT(I6,4X,I1,4X,I6,4X,I6)
+      WRITE(30,*)NBONDPEP,N
+      DO N=1,NBONDPEP
+         WRITE(30,36)N,BONTYP(N),BONDPEP(1,N),BONDPEP(2,N)
+      END DO
+
+   WRITE(30,*)'END BONDPEP INPUT'
+   WRITE(30,*)
+!------------------------------------------
+   N=0
+
+   WRITE(30,*)'LOOPS INPUT'
+   WRITE(30,*)NLOOP,MAXVAL(LOOPLEN(1:NLOOP)),N
+
+   DO N=1,NLOOP
+      LENGTH=LOOPLEN(N)
+      WRITE(30,*)LENGTH,LOOPTYP(N),LOOP(1:LENGTH,N)
+   END DO
+
+
+   WRITE(30,*)'END LOOPS INPUT'
+   WRITE(30,*)
+
+!------------------------------------------
+
+   WRITE(30,*)'CAPS INFO'
+
+   WRITE(30,*)NATOMCAP,PGCAP1,PGCAP2
+
+   WRITE(30,*)'ORIGINAL RADIUS'
+
+   WRITE(30,*)RADIUS
+
+   CLOSE(30)
+
+!=================================================================
+
+! NOW WRITE PDB:
+
+   OPEN(1,FILE=FILEPDB)
+
+42 FORMAT(A6,I5,2X,A3,1X,A3,1X,I5,4X,3F8.3,2F6.2,6X,A4)
+52 FORMAT(A50)
+
+   TEX='ATOM'; W1=1.0D0; W2=0.0D0; RES='GLY'
+
+   IPG=0; I=0
+
+43 IPG=IPG+1
+
+   J=0; LENGTH=PGLEN(IPG)
+
+   IF(PGTYP(IPG)==0)THEN
+      SEGID='CAP'
+   ELSEIF (PGTYP(IPG)==1)THEN
+      SEGID='ODD'
+   ELSEIF(PGTYP(IPG)==2)THEN
+      SEGID='EVE'
+   ELSE
+      SEGID='NEW'
+   END IF
+
+44 J=J+1
+   I=I+1
+
+      WRITE(1,42)TEX,I,TYP,RES,IPG,X(I),Y(I),Z(I),W1,W2,SEGID
+
+      IF(J<LENGTH)THEN          ! IF # 4
+         GOTO 44
+      END IF           ! END IF # 4
+
+      IF(IPG<NPG)THEN      !  IF # 5
+         GOTO 43
+      END IF             !  END IF # 5
+
+      TEX='END'
+      WRITE(1,52)TEX
+
+      CLOSE(1)
+
+
+   PRINT*,'PDB HAS BEEN WRITTEN'
+
+
+END SUBROUTINE OUTPUTS
+
+!============================================================================
+
+   SUBROUTINE WRITEPSF(NATOM,NPG,PGLEN,PGTYP,NBOND,BOND)
+
+      IMPLICIT NONE
+      INTEGER NPG,NATOM,NBOND
+      INTEGER,DIMENSION(:),ALLOCATABLE::PGLEN,PGTYP
+      INTEGER,DIMENSION(:,:),ALLOCATABLE::BOND
+
+      INTEGER N,N0,I,J,K
+
+      INTEGER J1,J2,J3,J4,J5,J6,J7,J8,J9
+      INTEGER IPG,NLINE,LENGTH
+      DOUBLE PRECISION CHARG,MASS,W1,W2
+      CHARACTER(8)TEX,TYP,RES,SEGID,RESNO,ATOM
+
+  OPEN(1,FILE='PGstart.psf')
+
+20  FORMAT(I8,1X,A4,1X,A4,1X,A3,2X,A3,2X,A4,2X,F9.6,6X,F8.4,11X,I1)
+21  FORMAT(I8,1X,A)
+
+   WRITE(1,21)NATOM,'!NATOM'
+
+      RES='GLY'
+      TYP='LAM'
+      ATOM='ATOM'
+      CHARG=0.0D0
+      MASS=1.0D0
+
+      IPG=0
+      I=0
+
+ 22   IPG=IPG+1
+
+      IF(IPG<10)THEN
+         WRITE(RESNO,'(I1)')IPG
+
+      ELSE IF (IPG<100) THEN
+         WRITE(RESNO,'(I2)')IPG
+
+      ELSE IF (IPG<1000)THEN
+         WRITE(RESNO,'(I3)')IPG
+
+      ELSE IF(IPG<10000) THEN
+         WRITE(RESNO,'(I4)')IPG
+
+      ELSE
+         WRITE(RESNO,'(I5)')IPG
+      END IF
+
+      IF(PGTYP(IPG)==0)THEN
+         SEGID='CAP'
+      ELSEIF (PGTYP(IPG)==1)THEN
+         SEGID='ODD'
+      ELSE IF(PGTYP(IPG)==2)THEN
+         SEGID='EVE'
+      ELSE
+         SEGID='NEW'
+      END IF
+
+      LENGTH=PGLEN(IPG)
+
+      J=0     !  This denotes the position of atoms on residue.
+
+ 23   J=J+1
+      I=I+1
+
+      WRITE(1,20)I,SEGID,RESNO,RES,TYP,ATOM,CHARG,MASS,0
+
+      IF(J<LENGTH)THEN
+         GOTO 23
+      END IF
+
+      IF(IPG < NPG)THEN
+         GOTO 22
+      END IF
+
+      NLINE=NBOND/4
+
+      WRITE(1,*)
+      WRITE(1,21)NBOND,'!NBOND: bonds'
+
+      DO N=1,NLINE
+         I=1+4*(N-1)
+         J1=BOND(1,I); J2=BOND(2,I); J3=BOND(1,I+1); J4=BOND(2,I+1)
+         J5=BOND(1,I+2); J6=BOND(2,I+2); J7=BOND(1,I+3); J8=BOND(2,I+3)
+
+         WRITE(1,'(8I8)')J1,J2,J3,J4,J5,J6,J7,J8
+      END DO
+
+      IF(MOD(NBOND,4)==1)THEN
+         J1=BOND(1,NBOND); J2=BOND(2,NBOND)
+         WRITE(1,'(2I8)')J1,J2
+
+      ELSE IF(MOD(NBOND,4)==2)THEN
+         J1=BOND(1,NBOND-1); J2=BOND(2,NBOND-1)
+         J3=BOND(1,NBOND); J4=BOND(2,NBOND)
+         WRITE(1,'(4I8)')J1,J2,J3,J4
+
+      ELSE IF(MOD(NBOND,4)==3)THEN
+         J1=BOND(1,NBOND-2); J2=BOND(2,NBOND-2)
+         J3=BOND(1,NBOND-1); J4=BOND(2,NBOND-1)
+         J5=BOND(1,NBOND); J6=BOND(2,NBOND)
+         WRITE(1,'(6I8)')J1,J2,J3,J4,J5,J6
+
+      END IF
+
+
+   PRINT*,'PSF HAS BEEN WRITTEN.'
+
+   END SUBROUTINE
+
+!=============================================
+
+   SUBROUTINE WHATTIME(TIMERUN)
+
+   IMPLICIT NONE
+   INTEGER TIMES(10)
+   INTEGER YEARS,MONS,TIMERUN,DAYS,HOURS,MINS,SECS,LASTTIME,TIMESTART,TIME0,NM
+
+   call date_and_time(values=times)
+
+   mins=times(6); hours=times(5); days=times(3)-1; mons=times(2); years=times(1)
+   timerun=mins+60*hours+60*24*days
+
+   if(mons>1)then
+      do nm=1,mons-1
+         if((mod(nm,2)==1.and.nm<=7).or.(mod(nm,2)==0.and.nm>=8))then
+            timerun=timerun+60*24*31
+         elseif(nm==2.and.mod(years,4)==0)then
+            timerun=timerun+60*24*29
+         elseif(nm==2.and.mod(years,4)/=0)then
+            timerun=timerun+60*24*28
+         else
+            timerun=timerun+60*24*30
+         end if
+      end do
+   end if
+
+   if(mod(years-1,4)==0)then
+      timerun=timerun+60*24*366*(years-1)
+   else
+      timerun=timerun+60*24*365*(years-1)
+   end if
+
+   END SUBROUTINE
+
+
+!========================================================================
+
+   SUBROUTINE GETINFO(NSTART,NATOM,NPG,PGLENMAX,NBONDGLY,NBONDPEP,NLOOP,LOOPLENMAX)
+
+   IMPLICIT NONE
+
+   INTEGER N,NSTART,NATOM,NPG,PGLENMAX,NBONDGLY,NBONDPEP,NLOOP,LOOPLENMAX
+   CHARACTER (LEN=64) FILECONFIG
+   CHARACTER ZERO*1,CHARID1*1,CHARID2*2,CHARID3*3,CHARID4*4
+   CHARACTER CHARA*512
+
+   WRITE(ZERO,'(I1)')0
+
+   IF(NSTART<10)THEN
+      WRITE(CHARID1,'(I1)')NSTART
+      FILECONFIG='config'//ZERO//ZERO//ZERO//CHARID1//'.inp'
+   ELSE IF(NSTART<100)THEN
+      WRITE(CHARID2,'(I2)')NSTART
+      FILECONFIG='config'//ZERO//ZERO//CHARID2//'.inp'
+   ELSE IF(NSTART<1000)THEN
+      WRITE(CHARID3,'(I3)')NSTART
+      FILECONFIG='config'//ZERO//CHARID3//'.inp'
+   ELSE IF(NSTART<10000)THEN
+      WRITE(CHARID4,'(I4)')NSTART
+      FILECONFIG='config'//CHARID4//'.inp'
+   ELSE IF(NSTART==1000000)THEN
+      FILECONFIG='configmother.inp'
+   ELSE
+      PRINT*,'NSTART IS TOO BIG! STOP NOW.'
+      STOP
+   END IF
+
+! TOPOLOGY:
+
+   OPEN(1,FILE=FILECONFIG)
+
+41 READ(1,*)CHARA
+   IF(CHARA(1:4)/='ATOM')THEN
+      GOTO 41
+   END IF
+
+   READ(1,*)N,NATOM
+
+2  READ(1,*)CHARA
+   IF(CHARA(1:4)/='RESI')THEN
+      GOTO 2
+   END IF
+
+   READ(1,*)N,NPG,PGLENMAX
+
+31 READ(1,*)CHARA
+   IF(CHARA(1:7)/='BONDGLY')THEN
+      GOTO 31
+   END IF
+
+   READ(1,*)N,NBONDGLY
+
+32 READ(1,*)CHARA
+   IF(CHARA(1:7)/='BONDPEP')THEN
+      GOTO 32
+   END IF
+
+   READ(1,*)NBONDPEP
+
+
+7  READ(1,*)CHARA
+   IF(CHARA(1:4)/='LOOP')THEN
+      GOTO 7
+   END IF
+
+   READ(1,*)NLOOP,LOOPLENMAX
+
+   CLOSE(1)
+
+   END SUBROUTINE GETINFO
+
+!========================================================================
+
+   SUBROUTINE SETPARA(LBOND,LSTART,LREP,LSWITCH,KBOND,KSWITCH,MSWITCH,KGTASE,KTPASE,LTPASE,KSUR,KEDASE,LEDASE, &
+              KGTTP,LGTTP,KGTED,LGTED,KSIDE,LSIDE,KWALL,KLEAD,KPAIR,LPAIR,DELTA,INVDELTA,BETA,INVMPBP,GMODE)
+
+   IMPLICIT NONE
+   INTEGER GMODE
+   DOUBLE PRECISION KBOND,LBOND,LSTART,LREP
+   DOUBLE PRECISION KSWITCH,LSWITCH,MSWITCH,SLOPE,ESWITCH,KSUR
+   DOUBLE PRECISION KGTASE,KTPASE,LTPASE,KSIDE,LSIDE,INVMPBP
+   DOUBLE PRECISION KEDASE,LEDASE,KGTTP,LGTTP,KGTED,LGTED,KWALL,KLEAD,KPAIR,LPAIR,DELTA,INVDELTA,BETA
+
+! -- ASSUME THERE IS NO FORCE FOR EXTENSION < CONTOUR LENGTH / 4. USE LREP INSTEAD OF LBOND:
+   LSTART=1.0D0
+
+   LREP=LBOND-LSTART
+
+! -- ALSO USE ALTERNATIVE BOND CONSTANT:
+!      KREP=KBOND*LBOND/LREP
+
+   LSWITCH=0.9D0*LREP
+
+   ESWITCH=KBOND*LSWITCH**2*(LREP/4.0D0/(LREP-LSWITCH)+0.5D0)
+
+   SLOPE=KBOND*(LREP/4.0D0/(1.0D0-LSWITCH/LREP)**2-LREP/4.0D0+LSWITCH)
+
+   KSWITCH=SLOPE/2.0D0/LSWITCH
+   MSWITCH=ESWITCH-KSWITCH*LSWITCH**2
+
+! BEFORE SWITCHING, POTENTIAL OF PEPTIDE: E(XBOND) = KBOND*XBOND**2*(1/2+1/4(1-XBOND/LBOND))
+! AFTER SWITCHING: E(XBOND)=KSWITCH*XBOND**2+MSWITCH
+
+!-----------------------
+!  FOR SURFACE CONSTRAINTS:
+   KSUR=50.0D0
+
+!  PARAMETERS FOR COMPLEX-RELATED INTERACTION:
+
+   KGTASE=5.0D0
+
+   KTPASE=5.0D0
+   LTPASE=1.5D0
+
+   KEDASE=10.0D0
+   LEDASE=1.0D0
+
+   KGTTP=10.0D0
+   LGTTP=1.0D0
+
+   KGTED=2.0D0
+   IF(GMODE==0)THEN
+      KGTED=0.0D0
+   END IF
+   LGTED=0.5D0
+
+   KSIDE=10.0D0
+   LSIDE=0.5D0
+
+   KWALL=10.0D0
+
+   KLEAD=10.0D0
+   IF(GMODE<4)THEN
+      KLEAD=0.0D0
+   END IF
+
+   KPAIR=5.0D0
+   LPAIR=1.5D0
+
+   DELTA=0.000001D0
+   INVDELTA=1.0D0/DELTA
+
+   BETA=0.00000000000001D0
+
+   INVMPBP=0.25D0
+
+!   PI=3.141592653589793239D0
+
+   END SUBROUTINE
+
+!========================================================================
+
+ SUBROUTINE PG_INPUT(GMODE,NSTART,NATOM,NATOMDEL,OLDNATOMDEL,NATOMCAP,NATOMSTART,DNOR,ATOR,PEPDIR,X,Y,Z,PGCAP1,PGCAP2,ORAD, &
+                 NPG,NPGSTART,PGID,PGLEN,PGTYP,PGDIR,NBONDGLY,NBONDGLYSTART,NBONDPEP,NBONDDEL, &
+                 BONDGLY,BONDPEP,BONTYP,NLOOP,NLOOPDEL,LOOP,LOOPLEN,LOOPTYP, &
+                 NSYN,SYNDIR,SYNTHESIS,GTLOAD,SYNPG,SYNLOOP,GLYTIP,GLYSEC,TPPEP,EDPEP, &
+                 GTATRANS,JDEACT,SIGCROSS,SIGCLEAVE,EDLOCKIN,EDCAP,EDHOLD,CRLKAGE,SYNRATIO, &
+                 XGTASE,YGTASE,ZGTASE,XTPASE,YTPASE,ZTPASE,XEDASE,YEDASE,ZEDASE,XEDASEOLD,YEDASEOLD,ZEDASEOLD)
+
+   IMPLICIT NONE
+
+   INTEGER GMODE,NATOM,NSYN,NATOMDEL,OLDNATOMDEL,NPG
+   INTEGER NBONDGLY,NBONDGLYSTART,NBONDPEP,NBONDDEL
+   INTEGER NLOOP,NATOMSTART,NPGSTART,NLOOPDEL
+   INTEGER N,N0,I,J,K,IPG,PGLENMAX,LOOPLENMAX
+   INTEGER NSTART,SYNRATIO,NATOMCAP,PGCAP1,PGCAP2
+
+   INTEGER,DIMENSION(:,:),ALLOCATABLE::PGID,BONDGLY,BONDPEP,LOOP,SYNTHESIS,GTLOAD,SYNPG,GLYTIP,GLYSEC
+   INTEGER,DIMENSION(:),ALLOCATABLE::PGLEN,PGTYP,PGDIR,BONTYP,DNOR,ATOR,PEPDIR
+   INTEGER,DIMENSION(:,:),ALLOCATABLE::GTATRANS,SIGCROSS,EDHOLD,CRLKAGE,EDPEP
+   INTEGER,DIMENSION(:),ALLOCATABLE::LOOPLEN,LOOPTYP,SYNDIR,SYNLOOP,JDEACT,SIGCLEAVE,EDLOCKIN,EDCAP
+   INTEGER,DIMENSION(:,:,:),ALLOCATABLE::TPPEP
+   DOUBLE PRECISION XCAP1,XCAP2,ORAD
+
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: X,Y,Z,XEDASE,YEDASE,ZEDASE,XEDASEOLD,YEDASEOLD,ZEDASEOLD
+   DOUBLE PRECISION,DIMENSION(:,:),ALLOCATABLE:: XTPASE,YTPASE,ZTPASE,XGTASE,YGTASE,ZGTASE
+
+   CHARACTER CHARA*512
+   CHARACTER (LEN=64) FILECOOR,FILECONFIG
+   CHARACTER ZERO*1,CHARID1*1,CHARID2*2,CHARID3*3,CHARID4*4
+
+
+   WRITE(ZERO,'(I1)')0
+
+   IF(NSTART<10)THEN
+      WRITE(CHARID1,'(I1)')NSTART
+      FILECOOR='coor'//ZERO//ZERO//ZERO//CHARID1//'.inp'
+      FILECONFIG='config'//ZERO//ZERO//ZERO//CHARID1//'.inp'
+   ELSE IF(NSTART<100)THEN
+      WRITE(CHARID2,'(I2)')NSTART
+      FILECOOR='coor'//ZERO//ZERO//CHARID2//'.inp'
+      FILECONFIG='config'//ZERO//ZERO//CHARID2//'.inp'
+   ELSE IF(NSTART<1000)THEN
+      WRITE(CHARID3,'(I3)')NSTART
+      FILECOOR='coor'//ZERO//CHARID3//'.inp'
+      FILECONFIG='config'//ZERO//CHARID3//'.inp'
+   ELSE IF(NSTART<10000)THEN
+      WRITE(CHARID4,'(I4)')NSTART
+      FILECOOR='coor'//CHARID4//'.inp'
+      FILECONFIG='config'//CHARID4//'.inp'
+   ELSE
+      PRINT*,'NSTART IS TOO BIG! STOP NOW.'
+      STOP
+   END IF
+
+   PRINT*,'=================================================================='
+
+!   PRINT*,'STARTING UP THE SYSTEM AT NSTART =',NSTART
+!   WRITE(*,*)
+
+   OPEN(1,FILE=FILECOOR,FORM='UNFORMATTED')
+
+   READ(1)NATOM
+
+   READ(1)X(1:NATOM)
+   READ(1)Y(1:NATOM)
+   READ(1)Z(1:NATOM)
+
+!   IF(NSTART>0.AND.GMODE>=12)THEN
+
+   IF(NSTART>0)THEN
+
+    READ(1)NSYN
+    READ(1)XGTASE(1,1:NSYN),XGTASE(2,1:NSYN),XTPASE(1,1:NSYN),XTPASE(2,1:NSYN),XTPASE(3,1:NSYN),XEDASE(1:NSYN),XEDASEOLD(1:NSYN)
+    READ(1)YGTASE(1,1:NSYN),YGTASE(2,1:NSYN),YTPASE(1,1:NSYN),YTPASE(2,1:NSYN),YTPASE(3,1:NSYN),YEDASE(1:NSYN),YEDASEOLD(1:NSYN)
+    READ(1)ZGTASE(1,1:NSYN),ZGTASE(2,1:NSYN),ZTPASE(1,1:NSYN),ZTPASE(2,1:NSYN),ZTPASE(3,1:NSYN),ZEDASE(1:NSYN),ZEDASEOLD(1:NSYN)
+
+!   ELSEIF(NSTART>0)THEN
+
+!    READ(1)NSYN
+!    READ(1)XGTASE(1,1:NSYN),XTPASE(1,1:NSYN),XTPASE(2,1:NSYN),XEDASE(1:NSYN),XEDASEOLD(1:NSYN)
+!    READ(1)YGTASE(1,1:NSYN),YTPASE(1,1:NSYN),YTPASE(2,1:NSYN),YEDASE(1:NSYN),YEDASEOLD(1:NSYN)
+!    READ(1)ZGTASE(1,1:NSYN),ZTPASE(1,1:NSYN),ZTPASE(2,1:NSYN),ZEDASE(1:NSYN),ZEDASEOLD(1:NSYN)
+
+   END IF
+
+   CLOSE(1)
+
+!   WRITE(*,*)'NUMBER OF ATOMS IN THE SYSTEM =',NATOM
+!   WRITE(*,*)
+
+!-------------------------------------------------------
+   OPEN(1,FILE=FILECONFIG)
+
+
+42 READ(1,*)CHARA
+   IF(CHARA(1:4)/='ATOM')THEN
+      GOTO 42
+   END IF
+
+   READ(1,*)NATOMSTART,NATOM,NATOMDEL,OLDNATOMDEL
+   READ(1,*)DNOR(1:NATOM)
+   READ(1,*)ATOR(1:NATOM)
+   READ(1,*)PEPDIR(1:NATOM)
+
+!-----------------------------------------------
+
+2  READ(1,*)CHARA
+   IF(CHARA(1:4)/='RESI')THEN
+      GOTO 2
+   END IF
+
+   READ(1,*)NPGSTART,NPG,PGLENMAX
+
+   DO I=1,NPG
+      READ(1,*)PGLEN(I),PGTYP(I),PGDIR(I),PGID(1:PGLEN(I),I)
+   END DO
+
+
+!-----------------------------------------------
+31 READ(1,*)CHARA
+   IF(CHARA(1:7)/='BONDGLY')THEN
+      GOTO 31
+   END IF
+
+
+   READ(1,*)NBONDGLYSTART,NBONDGLY
+
+
+10   FORMAT(I6,4X,I6,4X,I6)
+
+   DO N=1,NBONDGLY
+      READ(1,10)N0,BONDGLY(1,N),BONDGLY(2,N)
+      IF(N/=N0)THEN
+         PRINT*,'BONDS READING ERROR!','N=',N,'N0=',N0
+         STOP
+      END IF
+   END DO
+
+!-----------------------------------------------
+
+32 READ(1,*)CHARA
+   IF(CHARA(1:7)/='BONDPEP')THEN
+      GOTO 32
+   END IF
+
+
+   READ(1,*)NBONDPEP,NBONDDEL
+
+
+11   FORMAT(I6,4X,I1,4X,I6,4X,I6)
+
+   DO N=1,NBONDPEP
+      READ(1,11)N0,BONTYP(N),BONDPEP(1,N),BONDPEP(2,N)
+      IF(N/=N0)THEN
+         PRINT*,'BONDS READING ERROR!','N=',N,'N0=',N0
+         STOP
+      END IF
+   END DO
+
+7  READ(1,*)CHARA
+   IF(CHARA(1:4)/='LOOP')THEN
+      GOTO 7
+   END IF
+
+   READ(1,*)NLOOP,LOOPLENMAX,NLOOPDEL
+
+   DO N=1,NLOOP
+
+      READ(1,*)LOOPLEN(N),LOOPTYP(N),(LOOP(I,N),I=1,LOOPLEN(N))
+
+   END DO
+
+!  INFORMATION OF THE CAPS:
+
+8  READ(1,*)CHARA
+   IF(CHARA(1:4)/='CAPS')THEN
+      GOTO 8
+   END IF
+
+   READ(1,*)NATOMCAP,PGCAP1,PGCAP2
+
+!  ORIGINAL RADIUS:
+
+9  READ(1,*)CHARA
+
+   IF(CHARA(1:4)/='ORIG')THEN
+      GOTO 9
+   END IF
+
+   READ(1,*)ORAD
+
+!-------------------------------------
+!  Complexes:
+
+!12 FORMAT(2X,I2,2(2X,I1),10(2X,I7))
+
+   IF(NSTART==0)THEN
+
+
+      CALL ALIGNCELL(NATOM,X,Y,Z,NPG,PGID,PGLEN,PGTYP)
+
+      XCAP1=SUM(X(PGID(1:PGLEN(PGCAP1),PGCAP1)))/PGLEN(PGCAP1)
+      XCAP2=SUM(X(PGID(1:PGLEN(PGCAP2),PGCAP2)))/PGLEN(PGCAP2)
+
+
+      CALL SYNSETUP(NATOM,NATOMCAP,XCAP1,XCAP2,X,Y,Z,NSYN,SYNDIR,SYNTHESIS,GTLOAD,SYNPG,SYNLOOP, &
+                    XGTASE,YGTASE,ZGTASE,XTPASE,YTPASE,ZTPASE,XEDASE,YEDASE,ZEDASE,SYNRATIO,GMODE)
+
+
+   ELSE
+
+41    READ(1,*)CHARA
+      IF(CHARA(1:7)/='SYNCOMP')THEN
+         GOTO 41
+      END IF
+
+      READ(1,*)NSYN,SYNRATIO   ! THIS ARE NUMBER OF SYNTHESIS COMPLEXES AND THE ATOM/SYNTHESIS RATIO
+
+      READ(1,*)
+      READ(1,*)SYNDIR(1:NSYN)
+
+      READ(1,*)
+      READ(1,*)SYNTHESIS(1,1:NSYN),SYNTHESIS(2,1:NSYN)
+
+      READ(1,*)
+      READ(1,*)GTLOAD(1,1:NSYN),GTLOAD(2,1:NSYN)
+
+      READ(1,*)
+      READ(1,*)SYNPG(1,1:NSYN),SYNPG(2,1:NSYN)
+
+      READ(1,*)
+      READ(1,*)SYNLOOP(1:NSYN)
+
+      READ(1,*)
+      READ(1,*)GLYTIP(1,1:NSYN),GLYTIP(2,1:NSYN)
+
+      READ(1,*)
+      READ(1,*)GLYSEC(1,1:NSYN),GLYSEC(2,1:NSYN)
+
+      READ(1,*)
+      READ(1,*)TPPEP(1,1,1:NSYN),TPPEP(1,2,1:NSYN),TPPEP(1,3,1:NSYN)
+
+      READ(1,*)
+      READ(1,*)TPPEP(2,1,1:NSYN),TPPEP(2,2,1:NSYN),TPPEP(2,3,1:NSYN)
+
+      READ(1,*)
+      READ(1,*)EDPEP(1,1:NSYN),EDPEP(2,1:NSYN)
+
+      READ(1,*)
+      READ(1,*)GTATRANS(1,1:NSYN),GTATRANS(2,1:NSYN)
+
+      READ(1,*)
+      READ(1,*)JDEACT(1:NSYN)
+
+      READ(1,*)
+      READ(1,*)SIGCROSS(1,1:NSYN),SIGCROSS(2,1:NSYN),SIGCROSS(3,1:NSYN)
+
+      READ(1,*)
+      READ(1,*)SIGCLEAVE(1:NSYN)
+
+      READ(1,*)
+      READ(1,*)EDLOCKIN(1:NSYN)
+
+      READ(1,*)
+      READ(1,*)EDCAP(1:NSYN)
+
+      READ(1,*)
+      READ(1,*)EDHOLD(1,1:NSYN),EDHOLD(2,1:NSYN),EDHOLD(3,1:NSYN)
+
+      READ(1,*)
+      READ(1,*)CRLKAGE(1,1:NSYN),CRLKAGE(2,1:NSYN)
+
+
+   END IF
+
+   CLOSE(1)
+
+   DO N=1,NSYN
+
+      IF(SYNLOOP(N)/=0)THEN
+         LOOPTYP(SYNLOOP(N))=2
+      END IF
+
+   END DO
+
+   END SUBROUTINE PG_INPUT
+
+!==================================================================
+
+   SUBROUTINE ALIGNCELL(NATOM,X,Y,Z,NPG,PGID,PGLEN,PGTYP)
+
+   IMPLICIT NONE
+
+   INTEGER NATOM,NPG,NR,N,NCAP1,NCAP2
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: X,Y,Z
+
+   INTEGER,DIMENSION(:,:),ALLOCATABLE::PGID
+   INTEGER,DIMENSION(:),ALLOCATABLE::PGLEN,PGTYP
+   DOUBLE PRECISION XCAP1,XCAP2,YCAP1,YCAP2,ZCAP1,ZCAP2,DX,DY,DZ,SINP,COSP,XCEN,YCEN,ZCEN,XR,XA,YA,ZA
+
+   XCEN=SUM(X(1:NATOM))/NATOM
+
+   XCAP1=XCEN-10000.0D0
+   XCAP2=XCEN+10000.0D0
+
+   DO NR=1,NPG
+
+      IF(PGTYP(NR)/=0)THEN
+         CYCLE
+      END IF
+
+      XR=SUM(X(PGID(1:PGLEN(NR),NR)))/PGLEN(NR)
+
+      IF(XR>XCAP1.AND.XR<XCEN)THEN
+         XCAP1=XR
+         NCAP1=NR
+      END IF
+
+      IF(XR<XCAP2.AND.XR>XCEN)THEN
+         XCAP2=XR
+         NCAP2=NR
+      END IF
+
+   END DO
+
+   YCAP1=SUM(Y(PGID(1:PGLEN(NCAP1),NCAP1)))/PGLEN(NCAP1)
+   ZCAP1=SUM(Z(PGID(1:PGLEN(NCAP1),NCAP1)))/PGLEN(NCAP1)
+
+   YCAP2=SUM(Y(PGID(1:PGLEN(NCAP2),NCAP2)))/PGLEN(NCAP2)
+   ZCAP2=SUM(Z(PGID(1:PGLEN(NCAP2),NCAP2)))/PGLEN(NCAP2)
+
+!----------------------------------------------
+!  ROTATE ABOUT Y:
+
+   DX=XCAP2-XCAP1
+   DY=YCAP2-YCAP1
+   DZ=ZCAP2-ZCAP1
+
+   SINP=DZ/SQRT(DX*DX+DZ*DZ)
+   COSP=DX/SQRT(DX*DX+DZ*DZ)
+
+   DO N=1,NATOM
+
+      XA=X(N)
+      ZA=Z(N)
+
+      X(N)=XA*COSP+ZA*SINP
+
+      Z(N)=ZA*COSP-XA*SINP
+
+   END DO
+
+!----------------------------------------------
+!  ROTATE ABOUT Z:
+
+   XCAP1=SUM(X(PGID(1:PGLEN(NCAP1),NCAP1)))/PGLEN(NCAP1)
+   ZCAP1=SUM(Z(PGID(1:PGLEN(NCAP1),NCAP1)))/PGLEN(NCAP1)
+
+   XCAP2=SUM(X(PGID(1:PGLEN(NCAP2),NCAP2)))/PGLEN(NCAP2)
+   ZCAP2=SUM(Z(PGID(1:PGLEN(NCAP2),NCAP2)))/PGLEN(NCAP2)
+
+
+   DX=XCAP2-XCAP1
+   DY=YCAP2-YCAP1
+
+   SINP=-DY/SQRT(DX*DX+DY*DY)
+   COSP=DX/SQRT(DX*DX+DY*DY)
+
+   DO N=1,NATOM
+
+      XA=X(N)
+      YA=Y(N)
+
+      X(N)=XA*COSP-YA*SINP
+
+      Y(N)=YA*COSP+XA*SINP
+
+   END DO
+
+!----------------------------------------------
+!  MOVE THE CENTER TO (0,0,0):
+
+   XCAP1=SUM(X(PGID(1:PGLEN(NCAP1),NCAP1)))/PGLEN(NCAP1)
+   YCAP1=SUM(Y(PGID(1:PGLEN(NCAP1),NCAP1)))/PGLEN(NCAP1)
+
+   XCAP2=SUM(X(PGID(1:PGLEN(NCAP2),NCAP2)))/PGLEN(NCAP2)
+   YCAP2=SUM(Y(PGID(1:PGLEN(NCAP2),NCAP2)))/PGLEN(NCAP2)
+
+   XCEN=(XCAP1+XCAP2)/2
+   YCEN=(YCAP1+YCAP2)/2
+   ZCEN=(ZCAP1+ZCAP2)/2
+
+
+   DO N=1,NATOM
+      X(N)=X(N)-XCEN
+      Y(N)=Y(N)-YCEN
+      Z(N)=Z(N)-ZCEN
+   END DO
+
+
+
+   END SUBROUTINE
+
+!=======================================================================
+
+   SUBROUTINE SYNSETUP(NATOM,NATOMCAP,XCAP1,XCAP2,X,Y,Z,NSYN,SYNDIR,SYNTHESIS,GTLOAD,SYNPG,SYNLOOP, &
+                    XGTASE,YGTASE,ZGTASE,XTPASE,YTPASE,ZTPASE,XEDASE,YEDASE,ZEDASE,SYNRATIO,GMODE)
+
+   IMPLICIT NONE
+
+   INTEGER NATOM,NSYN,SYNRATIO,NATOMCAP,GMODE
+   INTEGER,DIMENSION(:),ALLOCATABLE::SYNDIR,SYNLOOP
+   INTEGER,DIMENSION(:,:),ALLOCATABLE::SYNTHESIS,GTLOAD,SYNPG
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: X,Y,Z,XEDASE,YEDASE,ZEDASE
+   DOUBLE PRECISION,DIMENSION(:,:),ALLOCATABLE:: XTPASE,YTPASE,ZTPASE,XGTASE,YGTASE,ZGTASE
+   DOUBLE PRECISION XCAP1,XCAP2,CYLEN,R,DELT,XLIM1,XLIM2,R2(2),X0,L0
+   INTEGER NS,NA,JR
+
+   SYNRATIO=(NATOM-NATOMCAP/2)/NSYN
+
+!  TO MAKE THE CAPS UNTOUCHABLE:
+   XCAP1=XCAP1+5.0D0
+   XCAP2=XCAP2-5.0D0
+
+   CYLEN=XCAP2-XCAP1
+   DELT=CYLEN/NSYN
+
+   DO NS=1,NSYN
+
+      CALL RANDOM_NUMBER(R)
+
+
+      IF(R<0.5D0)THEN
+         SYNDIR(NS)=1
+      ELSE
+         SYNDIR(NS)=-1
+      END IF
+
+   END DO
+
+
+   SYNTHESIS=0
+   GTLOAD=0
+   SYNPG=0
+   SYNLOOP=0
+
+   DO NS=1,NSYN
+      XLIM1=XCAP1+(NS-1)*DELT
+      XLIM2=XLIM1+DELT
+
+10    CALL RANDOM_NUMBER(R)
+
+      NA=NATOM*R+1
+
+      IF(X(NA)<XLIM1.OR.X(NA)>XLIM2)THEN
+         GOTO 10
+      END IF
+
+      CALL RANDOM_NUMBER(R2)
+
+      XGTASE(1,NS)=X(NA)+0.5D0*SYNDIR(NS)
+      YGTASE(1,NS)=Y(NA)+R2(1)-0.5D0
+      ZGTASE(1,NS)=Z(NA)+R2(2)-0.5D0
+
+      CALL RANDOM_NUMBER(R2)
+
+      XGTASE(2,NS)=X(NA)-0.5D0*SYNDIR(NS)
+      YGTASE(2,NS)=Y(NA)+R2(1)-0.5D0
+      ZGTASE(2,NS)=Z(NA)+R2(2)-0.5D0
+
+      CALL RANDOM_NUMBER(R2)
+
+      XTPASE(1,NS)=X(NA)+1.0D0*SYNDIR(NS)
+      YTPASE(1,NS)=Y(NA)+R2(1)-0.5D0
+      ZTPASE(1,NS)=Z(NA)+R2(2)-0.5D0
+
+      CALL RANDOM_NUMBER(R2)
+
+      XTPASE(2,NS)=X(NA)
+      YTPASE(2,NS)=Y(NA)+R2(1)-0.5D0
+      ZTPASE(2,NS)=Z(NA)+R2(2)-0.5D0
+
+      CALL RANDOM_NUMBER(R2)
+
+      XTPASE(3,NS)=X(NA)-1.0D0*SYNDIR(NS)
+      YTPASE(3,NS)=Y(NA)+R2(1)-0.5D0
+      ZTPASE(3,NS)=Z(NA)+R2(2)-0.5D0
+
+      CALL RANDOM_NUMBER(R2)
+
+      XEDASE(NS)=X(NA)
+      YEDASE(NS)=Y(NA)+R2(1)-0.5D0
+      ZEDASE(NS)=Z(NA)+R2(2)-0.5D0
+
+   END DO
+
+   IF(GMODE<12)THEN
+      XGTASE(2,1:NSYN)=XGTASE(1,1:NSYN)
+      YGTASE(2,1:NSYN)=YGTASE(1,1:NSYN)
+      ZGTASE(2,1:NSYN)=ZGTASE(1,1:NSYN)
+
+      XTPASE(3,1:NSYN)=XTPASE(1,1:NSYN)
+      YTPASE(3,1:NSYN)=YTPASE(1,1:NSYN)
+      ZTPASE(3,1:NSYN)=ZTPASE(1,1:NSYN)
+
+   END IF
+
+   IF(GMODE<7)THEN
+
+      XTPASE(2,1:NSYN)=XTPASE(1,1:NSYN)
+      YTPASE(2,1:NSYN)=YTPASE(1,1:NSYN)
+      ZTPASE(2,1:NSYN)=ZTPASE(1,1:NSYN)
+
+   END IF
+
+   PRINT*,'COMPLEXES INITIATED AT'
+
+30 FORMAT(I2,3(2X,F7.1))
+   DO NS=1,NSYN
+      WRITE(*,30)NS,XEDASE(NS),YEDASE(NS),ZEDASE(NS)
+   END DO
+
+!  TO RESTORE CAPS:
+   XCAP1=XCAP1-5.0D0
+   XCAP2=XCAP2+5.0D0
+
+   END SUBROUTINE
+
+!==================================================================
+
+   SUBROUTINE ADDSYNCOM(NATOM,X,Y,Z,XCAP1,XCAP2,NSYN,XGTASE,YGTASE,ZGTASE,XTPASE,YTPASE,ZTPASE, &
+                        XEDASE,YEDASE,ZEDASE,SYNDIR,GMODE,JREINI)
+
+   IMPLICIT NONE
+   DOUBLE PRECISION,DIMENSION(:,:),ALLOCATABLE:: XTPASE,YTPASE,ZTPASE,XGTASE,YGTASE,ZGTASE
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: XEDASE,YEDASE,ZEDASE,X,Y,Z
+   INTEGER,DIMENSION(:),ALLOCATABLE:: SYNDIR,JREINI
+   INTEGER NATOM,NSYN,NA,JREPEAT,NS,GMODE
+   DOUBLE PRECISION XCAP1,XCAP2,R,R2(2),DIST2
+
+   IF(JREINI(NSYN)==0)THEN
+      PRINT*,'ADD SYNCOMP #',NSYN
+      NSYN=NSYN
+   ELSE
+      PRINT*,'REINITIATE SYNCOMP #',NSYN
+      JREINI(NSYN)=0
+   END IF
+
+   CALL RANDOM_NUMBER(R)
+
+   IF(R>0.5D0)THEN
+      SYNDIR(NSYN)=1
+   ELSE
+      SYNDIR(NSYN)=-1
+   END IF
+
+!  TO MAKE THE CAPS UNTOUCHABLE:
+   XCAP1=XCAP1+5.0D0
+   XCAP2=XCAP2-5.0D0
+
+10 CALL RANDOM_NUMBER(R)
+
+   NA=NATOM*R+1
+
+   IF(X(NA)<XCAP1.OR.X(NA)>XCAP2)THEN
+      GOTO 10
+   END IF
+
+   JREPEAT=0
+
+   DO NS=1,NSYN-1
+
+      DIST2=(X(NA)-XEDASE(NS))**2+(Y(NA)-YEDASE(NS))**2+(Z(NA)-ZEDASE(NS))**2
+
+      IF(DIST2<160.0D0)THEN
+         JREPEAT=1
+         EXIT
+      END IF
+
+   END DO
+
+   IF(JREPEAT==1)THEN
+      GOTO 10
+   END IF
+
+   CALL RANDOM_NUMBER(R2)
+
+   XGTASE(1,NSYN)=X(NA)+0.5D0*SYNDIR(NSYN)
+   YGTASE(1,NSYN)=Y(NA)+R2(1)-0.5D0
+   ZGTASE(1,NSYN)=Z(NA)+R2(2)-0.5D0
+
+   CALL RANDOM_NUMBER(R2)
+
+   XGTASE(2,NSYN)=X(NA)-0.5D0*SYNDIR(NSYN)
+   YGTASE(2,NSYN)=Y(NA)+R2(1)-0.5D0
+   ZGTASE(2,NSYN)=Z(NA)+R2(2)-0.5D0
+
+   CALL RANDOM_NUMBER(R2)
+
+   XTPASE(1,NSYN)=X(NA)+1.0D0*SYNDIR(NSYN)
+   YTPASE(1,NSYN)=Y(NA)+R2(1)-0.5D0
+   ZTPASE(1,NSYN)=Z(NA)+R2(2)-0.5D0
+
+   CALL RANDOM_NUMBER(R2)
+
+   XTPASE(2,NSYN)=X(NA)
+   YTPASE(2,NSYN)=Y(NA)+R2(1)-0.5D0
+   ZTPASE(2,NSYN)=Z(NA)+R2(2)-0.5D0
+
+   CALL RANDOM_NUMBER(R2)
+
+   XTPASE(3,NSYN)=X(NA)-1.0D0*SYNDIR(NSYN)
+   YTPASE(3,NSYN)=Y(NA)+R2(1)-0.5D0
+   ZTPASE(3,NSYN)=Z(NA)+R2(2)-0.5D0
+
+   CALL RANDOM_NUMBER(R2)
+
+   XEDASE(NSYN)=X(NA)
+   YEDASE(NSYN)=Y(NA)+R2(1)-0.5D0
+   ZEDASE(NSYN)=Z(NA)+R2(2)-0.5D0
+
+   IF(GMODE<12)THEN
+      XGTASE(2,NSYN)=XGTASE(1,NSYN)
+      YGTASE(2,NSYN)=YGTASE(1,NSYN)
+      ZGTASE(2,NSYN)=ZGTASE(1,NSYN)
+
+      XTPASE(3,NSYN)=XTPASE(1,NSYN)
+      YTPASE(3,NSYN)=YTPASE(1,NSYN)
+      ZTPASE(3,NSYN)=ZTPASE(1,NSYN)
+   END IF
+
+   IF(GMODE<7)THEN
+      XTPASE(2,NSYN)=XTPASE(1,NSYN)
+      YTPASE(2,NSYN)=YTPASE(1,NSYN)
+      ZTPASE(2,NSYN)=ZTPASE(1,NSYN)
+   END IF
+
+
+30 FORMAT(3(2X,F7.1))
+   WRITE(*,30)XEDASE(NSYN),YEDASE(NSYN),ZEDASE(NSYN)
+
+!  TO RESTORE CAPS:
+   XCAP1=XCAP1-5.0D0
+   XCAP2=XCAP2+5.0D0
+
+   END SUBROUTINE
+
+!==========================================
+
+   SUBROUTINE INTERSEC(CHECK,XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3)
+
+   IMPLICIT NONE
+
+   INTEGER CHECK
+
+   DOUBLE PRECISION XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3
+   DOUBLE PRECISION M11,M12,M13,M21,M22,M23,M31,M32,M33
+   DOUBLE PRECISION I11,I12,I13,I21,I22,I23,I31,I32,I33
+   DOUBLE PRECISION DET,INVDET,T,U,V,XB,YB,ZB
+
+! -- FORM THE MATRIX FROM THE LINE THROUGH L1 L2 AND PLANE THROUGH P1 P2 P3:
+
+   M11=XL1-XL2
+   M21=YL1-YL2
+   M31=ZL1-ZL2
+
+   M12=XP2-XP1
+   M22=YP2-YP1
+   M32=ZP2-ZP1
+
+   M13=XP3-XP1
+   M23=YP3-YP1
+   M33=ZP3-ZP1
+
+   DET=M11*M22*M33+M12*M23*M31+M13*M21*M32-M11*M23*M32-M12*M21*M33-M13*M22*M31
+
+   INVDET=1.0D0/DET
+
+!--- MATRIX INVERSE:
+
+   I11=(M22*M33-M23*M32)*INVDET
+   I12=(M13*M32-M12*M33)*INVDET
+   I13=(M12*M23-M13*M22)*INVDET
+
+   I21=(M23*M31-M21*M33)*INVDET
+   I22=(M11*M33-M13*M31)*INVDET
+   I23=(M13*M21-M11*M23)*INVDET
+
+   I31=(M21*M32-M22*M31)*INVDET
+   I32=(M12*M31-M11*M32)*INVDET
+   I33=(M11*M22-M12*M21)*INVDET
+
+! --- BASE VECTOR:
+   XB=XL1-XP1
+   YB=YL1-YP1
+   ZB=ZL1-ZP1
+
+! -- INTERSECTION IS REPRESENTED BY (T U V):
+
+   T=I11*XB+I12*YB+I13*ZB
+
+   U=I21*XB+I22*YB+I23*ZB
+
+   V=I31*XB+I32*YB+I33*ZB
+
+! --- INTERSECTION OCCURS IF T =(0,1); U,V = (0,1); U+V = (0,1)
+! --- FIRST ASSUME CHECK = 1:
+
+   CHECK = 1
+
+   IF(T<0.0D0.OR.T>1.0D0)THEN
+      CHECK=0
+   END IF
+
+   IF(U<0.0D0.OR.U>1.0D0)THEN
+      CHECK=0
+   END IF
+
+   IF(V<0.0D0.OR.V>1.0D0)THEN
+      CHECK=0
+   END IF
+
+   IF(U+V<0.0D0.OR.U+V>1.0D0)THEN
+      CHECK=0
+   END IF
+
+
+   END SUBROUTINE
+
+!==================================================================
+
+   SUBROUTINE SETRAND(RXGTASE,RYGTASE,RZGTASE,RXTPASE,RYTPASE,RZTPASE,RXEDASE,RYEDASE,RZEDASE,JRAND,NRAND,NSYN,PI)
+
+   IMPLICIT NONE
+   DOUBLE PRECISION,DIMENSION(:,:),ALLOCATABLE:: RXGTASE,RYGTASE,RZGTASE,RXTPASE,RYTPASE,RZTPASE,RXEDASE,RYEDASE,RZEDASE
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE::R1,R2
+   INTEGER NRAND,JRAND,NSYN,NS,K1,K2,K4,JTP,JGT
+   DOUBLE PRECISION PI
+
+   JRAND=0
+
+   K1=70
+   K2=60
+   K4=50
+
+   ALLOCATE(R1(NRAND),R2(NRAND))
+
+   JGT=0
+
+   JTP=0
+
+   DO NS=1,NSYN
+
+!     FOR GTASE:
+
+      JGT=JGT+1
+
+      CALL RANDOM_NUMBER(R1)
+      CALL RANDOM_NUMBER(R2)
+
+      RXGTASE(JGT,1:NRAND)=SQRT(-2*LOG(R1(1:NRAND)))*SIN(2*PI*R2(1:NRAND))
+      RYGTASE(JGT,1:NRAND)=SQRT(-2*LOG(R1(1:NRAND)))*COS(2*PI*R2(1:NRAND))
+
+      CALL RANDOM_NUMBER(R1)
+      CALL RANDOM_NUMBER(R2)
+
+      RZGTASE(JGT,1:NRAND)=SQRT(-2*LOG(R1(1:NRAND)))*SIN(2*PI*R2(1:NRAND))
+
+      JGT=JGT+1
+
+      RXGTASE(JGT,1:NRAND)=SQRT(-2*LOG(R1(1:NRAND)))*SIN(2*PI*R2(1:NRAND))
+
+      CALL RANDOM_NUMBER(R1)
+      CALL RANDOM_NUMBER(R2)
+
+      RYGTASE(JGT,1:NRAND)=SQRT(-2*LOG(R1(1:NRAND)))*COS(2*PI*R2(1:NRAND))
+      RZGTASE(JGT,1:NRAND)=SQRT(-2*LOG(R1(1:NRAND)))*SIN(2*PI*R2(1:NRAND))
+
+!     FOR TPASES:
+
+      JTP=JTP+1
+
+      CALL RANDOM_NUMBER(R1)
+      CALL RANDOM_NUMBER(R2)
+
+      RXTPASE(JTP,1:NRAND)=SQRT(-2*LOG(R1(1:NRAND)))*COS(2*PI*R2(1:NRAND))
+      RYTPASE(JTP,1:NRAND)=SQRT(-2*LOG(R1(1:NRAND)))*SIN(2*PI*R2(1:NRAND))
+
+      CALL RANDOM_NUMBER(R1)
+      CALL RANDOM_NUMBER(R2)
+
+      RZTPASE(JTP,1:NRAND)=SQRT(-2*LOG(R1(1:NRAND)))*COS(2*PI*R2(1:NRAND))
+
+      JTP=JTP+1
+
+      RXTPASE(JTP,1:NRAND)=SQRT(-2*LOG(R1(1:NRAND)))*COS(2*PI*R2(1:NRAND))
+
+      CALL RANDOM_NUMBER(R1)
+      CALL RANDOM_NUMBER(R2)
+
+      RYTPASE(JTP,1:NRAND)=SQRT(-2*LOG(R1(1:NRAND)))*SIN(2*PI*R2(1:NRAND))
+      RZTPASE(JTP,1:NRAND)=SQRT(-2*LOG(R1(1:NRAND)))*COS(2*PI*R2(1:NRAND))
+
+      JTP=JTP+1
+
+      CALL RANDOM_NUMBER(R1)
+      CALL RANDOM_NUMBER(R2)
+
+      RXTPASE(JTP,1:NRAND)=SQRT(-2*LOG(R1(1:NRAND)))*COS(2*PI*R2(1:NRAND))
+      RYTPASE(JTP,1:NRAND)=SQRT(-2*LOG(R1(1:NRAND)))*SIN(2*PI*R2(1:NRAND))
+
+      CALL RANDOM_NUMBER(R1)
+      CALL RANDOM_NUMBER(R2)
+
+      RZTPASE(JTP,1:NRAND)=SQRT(-2*LOG(R1(1:NRAND)))*COS(2*PI*R2(1:NRAND))
+
+!     FOR EDASES:
+
+      RXEDASE(NS,1:NRAND)=SQRT(-2*LOG(R1(1:NRAND)))*SIN(2*PI*R2(1:NRAND))
+
+      CALL RANDOM_NUMBER(R1)
+      CALL RANDOM_NUMBER(R2)
+
+      RYEDASE(NS,1:NRAND)=SQRT(-2*LOG(R1(1:NRAND)))*COS(2*PI*R2(1:NRAND))
+      RZEDASE(NS,1:NRAND)=SQRT(-2*LOG(R1(1:NRAND)))*SIN(2*PI*R2(1:NRAND))
+
+   END DO
+
+   DEALLOCATE(R1,R2)
+
+   RXGTASE=K1*RXGTASE
+   RYGTASE=K1*RYGTASE
+   RZGTASE=K1*RZGTASE
+   RXTPASE=K2*RXTPASE
+   RYTPASE=K2*RYTPASE
+   RZTPASE=K2*RZTPASE
+   RXEDASE=K4*RXEDASE
+   RYEDASE=K4*RYEDASE
+   RZEDASE=K4*RZEDASE
+
+  END SUBROUTINE
+
+!=========================================================================
+
+   SUBROUTINE RANDFORCES(NSYN,FXGTASE,FYGTASE,FZGTASE,FXTPASE,FYTPASE,FZTPASE,FXEDASE,FYEDASE,FZEDASE, &
+                         RXGTASE,RYGTASE,RZGTASE,RXTPASE,RYTPASE,RZTPASE,RXEDASE,RYEDASE,RZEDASE,JRAND, &
+                         YGTASE,ZGTASE,YTPASE,ZTPASE,YEDASE,ZEDASE)
+
+
+   IMPLICIT NONE
+
+   INTEGER NSYN,JRAND,NS
+
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE::FXEDASE,FYEDASE,FZEDASE
+   DOUBLE PRECISION,DIMENSION(:,:),ALLOCATABLE::FXTPASE,FYTPASE,FZTPASE,FXGTASE,FYGTASE,FZGTASE
+   DOUBLE PRECISION,DIMENSION(:,:),ALLOCATABLE::RXGTASE,RYGTASE,RZGTASE,RXTPASE,RYTPASE,RZTPASE,RXEDASE,RYEDASE,RZEDASE
+   DOUBLE PRECISION,DIMENSION(:,:),ALLOCATABLE::YGTASE,ZGTASE,YTPASE,ZTPASE
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE::YEDASE,ZEDASE
+   DOUBLE PRECISION ARG,DIST
+
+   JRAND=JRAND+1
+
+   FXGTASE(1,1:NSYN)=RXGTASE(1:NSYN,JRAND)
+   FYGTASE(1,1:NSYN)=RYGTASE(1:NSYN,JRAND)
+   FZGTASE(1,1:NSYN)=RZGTASE(1:NSYN,JRAND)
+
+   FXGTASE(2,1:NSYN)=RXGTASE(NSYN+1:2*NSYN,JRAND)
+   FYGTASE(2,1:NSYN)=RYGTASE(NSYN+1:2*NSYN,JRAND)
+   FZGTASE(2,1:NSYN)=RZGTASE(NSYN+1:2*NSYN,JRAND)
+
+   FXTPASE(1,1:NSYN)=RXTPASE(1:NSYN,JRAND)
+   FYTPASE(1,1:NSYN)=RYTPASE(1:NSYN,JRAND)
+   FZTPASE(1,1:NSYN)=RZTPASE(1:NSYN,JRAND)
+
+   FXTPASE(2,1:NSYN)=RXTPASE(NSYN+1:2*NSYN,JRAND)
+   FYTPASE(2,1:NSYN)=RYTPASE(NSYN+1:2*NSYN,JRAND)
+   FZTPASE(2,1:NSYN)=RZTPASE(NSYN+1:2*NSYN,JRAND)
+
+   FXTPASE(3,1:NSYN)=RXTPASE(2*NSYN+1:3*NSYN,JRAND)
+   FYTPASE(3,1:NSYN)=RYTPASE(2*NSYN+1:3*NSYN,JRAND)
+   FZTPASE(3,1:NSYN)=RZTPASE(2*NSYN+1:3*NSYN,JRAND)
+
+   FXEDASE(1:NSYN)=RXEDASE(1:NSYN,JRAND)
+   FYEDASE(1:NSYN)=RYEDASE(1:NSYN,JRAND)
+   FZEDASE(1:NSYN)=RZEDASE(1:NSYN,JRAND)
+
+
+!---- REDUCE RANDOM FORCE ON THE PERPENDICULAR DIRECTION TO THE SURFACE 90%:
+
+
+
+   DO NS=1,NSYN
+
+      ARG=FYGTASE(1,NS)*YGTASE(1,NS)+FZGTASE(1,NS)*ZGTASE(1,NS)
+
+      DIST=YGTASE(1,NS)**2+ZGTASE(1,NS)**2
+
+      FYGTASE(1,NS)=FYGTASE(1,NS)-0.9D0*ARG*YGTASE(1,NS)/DIST
+
+      FZGTASE(1,NS)=FZGTASE(1,NS)-0.9D0*ARG*ZGTASE(1,NS)/DIST
+
+
+      ARG=FYGTASE(2,NS)*YGTASE(2,NS)+FZGTASE(2,NS)*ZGTASE(2,NS)
+
+      DIST=YGTASE(2,NS)**2+ZGTASE(2,NS)**2
+
+      FYGTASE(2,NS)=FYGTASE(2,NS)-0.9D0*ARG*YGTASE(2,NS)/DIST
+
+      FZGTASE(2,NS)=FZGTASE(2,NS)-0.9D0*ARG*ZGTASE(2,NS)/DIST
+
+!--------
+
+      ARG=FYTPASE(1,NS)*YTPASE(1,NS)+FZTPASE(1,NS)*ZTPASE(1,NS)
+
+      DIST=YTPASE(1,NS)**2+ZTPASE(1,NS)**2
+
+      FYTPASE(1,NS)=FYTPASE(1,NS)-0.9D0*ARG*YTPASE(1,NS)/DIST
+
+      FZTPASE(1,NS)=FZTPASE(1,NS)-0.9D0*ARG*ZTPASE(1,NS)/DIST
+
+
+      ARG=FYTPASE(2,NS)*YTPASE(2,NS)+FZTPASE(1,NS)*ZTPASE(2,NS)
+
+      DIST=YTPASE(2,NS)**2+ZTPASE(2,NS)**2
+
+      FYTPASE(2,NS)=FYTPASE(2,NS)-0.9D0*ARG*YTPASE(2,NS)/DIST
+
+      FZTPASE(2,NS)=FZTPASE(2,NS)-0.9D0*ARG*ZTPASE(2,NS)/DIST
+
+
+      ARG=FYTPASE(3,NS)*YTPASE(3,NS)+FZTPASE(3,NS)*ZTPASE(3,NS)
+
+      DIST=YTPASE(3,NS)**2+ZTPASE(3,NS)**2
+
+      FYTPASE(3,NS)=FYTPASE(3,NS)-0.9D0*ARG*YTPASE(3,NS)/DIST
+
+      FZTPASE(3,NS)=FZTPASE(1,NS)-0.9D0*ARG*ZTPASE(3,NS)/DIST
+
+!---------
+
+      ARG=FYEDASE(NS)*YEDASE(NS)+FZEDASE(NS)*ZEDASE(NS)
+
+      DIST=YEDASE(NS)**2+ZEDASE(NS)**2
+
+      FYEDASE(NS)=FYEDASE(NS)-0.9D0*ARG*YEDASE(NS)/DIST
+
+      FZEDASE(NS)=FZEDASE(NS)-0.9D0*ARG*ZEDASE(NS)/DIST
+
+   END DO
+
+
+
+   END SUBROUTINE
+
+!=========================================================================
+
+   SUBROUTINE REFRAME(NATOM,X,Y,Z,NSYN,XEDASE,YEDASE,ZEDASE,XCEN,YCEN,ZCEN,UX,UY,UZ)
+
+   IMPLICIT NONE
+
+   INTEGER NATOM,NSYN,NS,NTEMP,N,CHECK,NCOUNT
+
+   DOUBLE PRECISION X0,Y0,Z0,X00,Y00,Z00,F,FY,FZ,FYOLD,FZOLD,DEV2,SIGMA2,REP,DIST,INVDIST,BETA,INVBETA
+   DOUBLE PRECISION DX,DY,DZ,PROJ
+   DOUBLE PRECISION XTEMP(2000),YTEMP(2000),ZTEMP(2000)
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:)::X,Y,Z,XEDASE,YEDASE,ZEDASE,XCEN,YCEN,ZCEN,UX,UY,UZ
+
+   BETA=0.000000001D0
+   INVBETA=1.0D0/BETA
+
+
+   DO NS=1,NSYN
+
+      X0=XEDASE(NS)-5.0D0; Y0=0.0D0; Z0=0.0D0
+
+      NTEMP=0
+
+      DO N=1,NATOM
+         IF(X(N)>X0-5.0D0.AND.X(N)<X0+5.0D0)THEN
+            NTEMP=NTEMP+1
+            XTEMP(NTEMP)=X0
+            YTEMP(NTEMP)=Y(N)
+            ZTEMP(NTEMP)=Z(N)
+         END IF
+      END DO
+
+      FY=0.0D0; FZ=0.0D0
+      CHECK=0
+
+      DO N=1,100000000
+         FYOLD=FY; FZOLD=FZ
+
+         CALL DEVIATION(X0,Y0,Z0,XTEMP,YTEMP,ZTEMP,NTEMP,SIGMA2)
+         DEV2=SIGMA2
+!--------
+         REP=Y0+BETA
+         CALL DEVIATION(X0,REP,Z0,XTEMP,YTEMP,ZTEMP,NTEMP,SIGMA2)
+
+         FY=-(SIGMA2-DEV2)*INVBETA
+!-------
+         REP=Z0+BETA
+         CALL DEVIATION(X0,Y0,REP,XTEMP,YTEMP,ZTEMP,NTEMP,SIGMA2)
+
+         FZ=-(SIGMA2-DEV2)*INVBETA
+!----------
+
+         F=SQRT(FY**2+FZ**2)
+         Y0=Y0+0.002D0*FY/F
+         Z0=Z0+0.002D0*FZ/F
+
+         IF(FY*FYOLD+FZ*FZOLD<0.0D0)THEN
+            CHECK=CHECK+1
+            IF(CHECK==10)THEN
+               EXIT
+            END IF
+         ELSE
+            CHECK=0
+         END IF
+
+      END DO
+
+!-----------------------------------
+
+      X00=XEDASE(NS)+5.0D0; Y00=0.0D0; Z00=0.0D0
+
+      NTEMP=0
+
+      DO N=1,NATOM
+         IF(X(N)>X00-5.0D0.AND.X(N)<X00+5.0D0)THEN
+            NTEMP=NTEMP+1
+            XTEMP(NTEMP)=X00
+            YTEMP(NTEMP)=Y(N)
+            ZTEMP(NTEMP)=Z(N)
+         END IF
+      END DO
+
+      FY=0.0D0; FZ=0.0D0
+      CHECK=0
+
+      DO N=1,100000000
+         FYOLD=FY; FZOLD=FZ
+
+         CALL DEVIATION(X00,Y00,Z00,XTEMP,YTEMP,ZTEMP,NTEMP,SIGMA2)
+         DEV2=SIGMA2
+!--------
+         REP=Y00+BETA
+         CALL DEVIATION(X00,REP,Z00,XTEMP,YTEMP,ZTEMP,NTEMP,SIGMA2)
+
+         FY=-(SIGMA2-DEV2)*INVBETA
+!-------
+         REP=Z00+BETA
+         CALL DEVIATION(X00,Y00,REP,XTEMP,YTEMP,ZTEMP,NTEMP,SIGMA2)
+
+         FZ=-(SIGMA2-DEV2)*INVBETA
+!----------
+
+         F=SQRT(FY**2+FZ**2)
+         Y00=Y00+0.002D0*FY/F
+         Z00=Z00+0.002D0*FZ/F
+
+         IF(FY*FYOLD+FZ*FZOLD<0.0D0)THEN
+            CHECK=CHECK+1
+            IF(CHECK==10)THEN
+               EXIT
+            END IF
+         ELSE
+            CHECK=0
+         END IF
+
+      END DO
+
+      UX(NS)=X00-X0; UY(NS)=Y00-Y0; UZ(NS)=Z00-Z0
+
+      DIST=SQRT(UX(NS)**2+UY(NS)**2+UZ(NS)**2)
+
+      INVDIST=1.0D0/DIST
+
+      UX(NS)=UX(NS)*INVDIST
+      UY(NS)=UY(NS)*INVDIST
+      UZ(NS)=UZ(NS)*INVDIST
+
+      XCEN(NS)=XEDASE(NS)
+
+      YCEN(NS)=0.5D0*(Y0+Y00)
+      ZCEN(NS)=0.5D0*(Z0+Z00)
+
+   END DO
+
+
+   END SUBROUTINE
+
+!==============================================================================
+
+   SUBROUTINE DEVIATION(CENX,CENY,CENZ,X,Y,Z,LENGTH,SIGMA2)
+
+   IMPLICIT NONE
+
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:) ::R
+   DOUBLE PRECISION CENX,CENY,CENZ,SIGMA2,RMEAN
+   DOUBLE PRECISION X(2000),Y(2000),Z(2000)
+   INTEGER LENGTH,N
+
+!======================  
+   ALLOCATE(R(LENGTH))
+
+   RMEAN=0.0D0
+
+   DO N=1,LENGTH
+      R(N)=SQRT((X(N)-CENX)**2+(Y(N)-CENY)**2+(Z(N)-CENZ)**2)
+      RMEAN=RMEAN+R(N)
+   END DO
+
+   RMEAN=RMEAN/LENGTH
+
+   SIGMA2=0.0D0
+   DO N=1,LENGTH
+      SIGMA2=SIGMA2+(R(N)-RMEAN)**2
+   END DO
+
+   SIGMA2=SIGMA2/LENGTH
+
+   DEALLOCATE(R)
+
+   END SUBROUTINE
+
+
+!========================================================================
+
+!- CALCULATE LEADING DIRECTION:
+
+   SUBROUTINE LEADIR(NSYN,SYNDIR,XGTASE,YGTASE,ZGTASE,XCEN,YCEN,ZCEN,UX,UY,UZ,XLEAD,YLEAD,ZLEAD)
+
+   IMPLICIT NONE
+
+   INTEGER NS,NSYN
+
+   INTEGER, ALLOCATABLE, DIMENSION(:)::SYNDIR
+   DOUBLE PRECISION DIST,INVDIST,DX,DY,DZ
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:,:)::XGTASE,YGTASE,ZGTASE
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:)::XCEN,YCEN,ZCEN,UX,UY,UZ,XLEAD,YLEAD,ZLEAD
+
+
+   DO NS=1,NSYN
+
+      DX=XGTASE(1,NS)-XCEN(NS)
+      DY=YGTASE(1,NS)-YCEN(NS)
+      DZ=ZGTASE(1,NS)-ZCEN(NS)
+
+      XLEAD(NS)=UY(NS)*DZ-UZ(NS)*DY
+      YLEAD(NS)=UZ(NS)*DX-UX(NS)*DZ
+      ZLEAD(NS)=UX(NS)*DY-UY(NS)*DX
+
+      DIST=SQRT(XLEAD(NS)**2+YLEAD(NS)**2+ZLEAD(NS)**2)
+
+      INVDIST=1.0D0/DIST
+
+      XLEAD(NS)=XLEAD(NS)*SYNDIR(NS)/DIST
+      YLEAD(NS)=YLEAD(NS)*SYNDIR(NS)/DIST
+      ZLEAD(NS)=ZLEAD(NS)*SYNDIR(NS)/DIST
+
+   END DO
+
+   END SUBROUTINE
+
+!==============================================================================
+
+   SUBROUTINE LYTGTASE(NATOM,NPG,PGID,PGLEN,PGTYP,DNOR,ATOR,PLYT,NATOMDEL,NSYN,SYNPG,SYNLOOP,LOOPLEN,LOOP)
+
+   IMPLICIT NONE
+
+   INTEGER NATOM,NPG,NATOMDEL,NR,JR,JFREE1,JFREE2,JCRLK1,JCRLK2,JDEL,JCHECK,NSYN,NS,JCYCLE,ILOOP,IPG,JCOUNT
+   INTEGER,ALLOCATABLE,DIMENSION(:)::DNOR,ATOR,MARK,MARKLOOP,PGTYP,PGLEN,LOOPLEN,SYNLOOP
+   INTEGER,ALLOCATABLE,DIMENSION(:,:)::PGID,LOOP,SYNPG
+   DOUBLE PRECISION PLYT,R
+
+   ALLOCATE(MARK(NATOM),MARKLOOP(NATOM))
+
+   MARK=0
+   MARKLOOP=0
+
+   DO NS=1,NSYN
+
+      ILOOP=SYNLOOP(NS)
+
+      IF(ILOOP/=0)THEN
+
+         MARKLOOP(LOOP(1:LOOPLEN(ILOOP),ILOOP))=1
+
+      END IF
+
+      IPG=SYNPG(1,NS)
+
+      IF(IPG/=0)THEN
+
+         MARK(PGID(1:PGLEN(IPG),IPG))=1
+
+      END IF
+
+      IPG=SYNPG(2,NS)
+
+      IF(IPG/=0)THEN
+
+         MARK(PGID(1:PGLEN(IPG),IPG))=1
+
+      END IF
+
+   END DO
+
+!$OMP PARALLEL &
+!$OMP DEFAULT(NONE) &
+!$OMP PRIVATE(NR,JR,JFREE1,JFREE2,JCRLK1,JCRLK2,JDEL,JCHECK,NS,JCYCLE,R,JCOUNT) &
+!$OMP SHARED(NPG,DNOR,ATOR,MARK,MARKLOOP,PGTYP,PGLEN,PGID,PLYT) &
+!$OMP REDUCTION (+:NATOMDEL)
+
+!$OMP DO SCHEDULE(GUIDED,64)
+
+   DO NR=1,NPG
+
+      IF(PGTYP(NR)/=3)THEN
+         CYCLE
+      END IF
+
+      JCYCLE=0
+
+      DO JR=1,PGLEN(NR)
+
+         IF(MARK(PGID(JR,NR))==1)THEN
+            JCYCLE=1
+            EXIT
+         END IF
+
+      END DO
+
+      IF(JCYCLE==1)THEN
+         CYCLE
+      END IF
+
+!     FIRST DEAL WITH FREE STRANDS:
+
+      JCHECK=0
+      JDEL=0
+
+      DO JR=1,PGLEN(NR)
+
+         IF(DNOR(PGID(JR,NR))==0.OR.ATOR(PGID(JR,NR))==0)THEN
+            JCHECK=1
+         ELSEIF(ATOR(PGID(JR,NR))==-1)THEN
+            JDEL=JDEL+1
+         END IF
+
+      END DO
+
+      IF(JCHECK==0)THEN
+
+         IF(JDEL==PGLEN(NR))THEN
+            CYCLE
+         END IF
+
+         CALL RANDOM_NUMBER(R)
+
+         IF(PLYT<R)THEN
+            CYCLE
+         END IF
+
+         IF(PGLEN(NR)==1)THEN
+
+            NATOMDEL=NATOMDEL+1
+
+            DNOR(PGID(1,NR))=-1
+            ATOR(PGID(1,NR))=-1
+
+            CYCLE
+
+         END IF
+
+         DO JR=1,PGLEN(NR)
+
+            IF(ATOR(PGID(JR,NR))/=-1)THEN
+               JFREE1=JR
+               EXIT
+            END IF
+
+         END DO
+
+         DO JR=PGLEN(NR),1,-1
+
+            IF(ATOR(PGID(JR,NR))/=-1)THEN
+               JFREE2=JR
+               EXIT
+            END IF
+
+         END DO
+
+         CALL RANDOM_NUMBER(R)
+
+         JDEL=(JFREE2-JFREE1+1)*R+1
+
+         NATOMDEL=NATOMDEL+JDEL
+
+         DNOR(PGID(JFREE1:JFREE1+JDEL-1,NR))=-1
+         ATOR(PGID(JFREE1:JFREE1+JDEL-1,NR))=-1
+
+         CYCLE
+
+      END IF
+
+!---------------------------
+
+!     CHECK FROM THE TAIL:
+
+      JCRLK1=1
+
+      DO JR=1,PGLEN(NR)
+         IF(DNOR(PGID(JR,NR))==0.OR.ATOR(PGID(JR,NR))==0)THEN
+            JCRLK1=JR
+            EXIT
+         END IF
+      END DO
+
+      IF(JCRLK1==1)THEN
+         GOTO 10
+      END IF
+
+      JFREE1=0
+
+      DO JR=1,JCRLK1-1
+         IF(ATOR(PGID(JR,NR))==1)THEN
+            JFREE1=JR
+            EXIT
+         END IF
+      END DO
+
+      IF(JFREE1==0)THEN
+         GOTO 10
+      END IF
+
+      JCOUNT=SUM(MARKLOOP(PGID(JFREE1:JCRLK1-1,NR)))
+      IF(JCOUNT>0)THEN
+         GOTO 10
+      END IF
+
+      CALL RANDOM_NUMBER(R)
+
+      IF(PLYT<R)THEN
+         GOTO 10
+      END IF
+
+      CALL RANDOM_NUMBER(R)
+
+      JDEL=(JCRLK1-JFREE1)*R+1
+
+      NATOMDEL=NATOMDEL+JDEL
+
+      DNOR(PGID(JFREE1:JFREE1+JDEL-1,NR))=-1
+      ATOR(PGID(JFREE1:JFREE1+JDEL-1,NR))=-1
+
+!--------------------------
+
+!     CHECK FROM THE TIP:
+
+10    JCRLK2=PGLEN(NR)
+
+      DO JR=PGLEN(NR),1,-1
+
+         IF(DNOR(PGID(JR,NR))==0.OR.ATOR(PGID(JR,NR))==0)THEN
+            JCRLK2=JR
+            EXIT
+         END IF
+
+      END DO
+
+      IF(JCRLK2==PGLEN(NR))THEN
+         CYCLE
+      END IF
+
+      JFREE2=0
+
+      DO JR=PGLEN(NR),JCRLK2+1,-1
+
+         IF(ATOR(PGID(JR,NR))/=-1)THEN
+            JFREE2=JR
+            EXIT
+         END IF
+
+      END DO
+
+      IF(JFREE2==0)THEN
+         CYCLE
+      END IF
+
+      JCOUNT=SUM(MARKLOOP(PGID(JCRLK2+1:JFREE2,NR)))
+      IF(JCOUNT>0)THEN
+         CYCLE
+      END IF
+
+      CALL RANDOM_NUMBER(R)
+
+      IF(PLYT<R)THEN
+         CYCLE
+      END IF
+
+      CALL RANDOM_NUMBER(R)
+
+      JDEL=(JFREE2-JCRLK2)*R+1
+
+      NATOMDEL=NATOMDEL+JDEL
+
+      DNOR(PGID(JFREE2-JDEL+1:JFREE2,NR))=-1
+      ATOR(PGID(JFREE2-JDEL+1:JFREE2,NR))=-1
+
+   END DO
+
+!$OMP END DO NOWAIT
+!$OMP END PARALLEL
+
+   DEALLOCATE(MARK,MARKLOOP)
+
+   END SUBROUTINE
+
+!====================================================================
+
+   SUBROUTINE UPDATESYS(NATOM,NATOMSTART,NDEL,DNOR,ATOR,PEPDIR,ATOMRAD,X,Y,Z,NPG,NPGSTART,PGID, &
+               PGLEN,PGTYP,PGDIR,NSYN,SYNPG,OLDSYNPG,GLYTIP,GLYSEC,TPPEP,EDPEP,EDHOLD, &
+                NLOOP,LOOP,LOOPLEN,LOOPTYP,NBONDGLY,NBONDGLYSTART,NBONDPEP,BONDGLY,BONDPEP,BONTYP)
+
+   IMPLICIT NONE
+
+   INTEGER NATOM,NATOMSTART,NDEL,NPG,NPGSTART,NSYN,NLOOP,NBONDGLY,NBONDGLYSTART,NBONDPEP
+   INTEGER N,NTEMP,NR,JR,LENGTH,NS,NL,JL,NA,NPGTEMP,J,NB
+   INTEGER,ALLOCATABLE,DIMENSION(:)::DNOR,ATOR,PEPDIR,PGLEN,PGTYP,PGDIR,LOOPLEN,LOOPTYP,MAP
+   INTEGER,ALLOCATABLE,DIMENSION(:,:)::SYNPG,OLDSYNPG,GLYTIP,GLYSEC,EDPEP
+   INTEGER,ALLOCATABLE,DIMENSION(:)::BONTYP,DNORTEMP,ATORTEMP
+   INTEGER,ALLOCATABLE,DIMENSION(:,:)::PGID,LOOP,BONDGLY,BONDPEP,EDHOLD
+   INTEGER,ALLOCATABLE,DIMENSION(:,:,:)::TPPEP
+   DOUBLE PRECISION,ALLOCATABLE,DIMENSION(:)::X,Y,Z,ATOMRAD
+
+   ALLOCATE(MAP(NATOM),DNORTEMP(NATOM-NDEL),ATORTEMP(NATOM-NDEL))
+
+   DO N=1,NATOMSTART
+      MAP(N)=N
+   END DO
+
+   NTEMP=NATOMSTART
+
+   DO N=1+NATOMSTART,NATOM
+      IF(ATOR(N)/=-1)THEN
+         NTEMP=NTEMP+1
+         MAP(N)=NTEMP
+         DNORTEMP(NTEMP)=DNOR(N)
+         ATORTEMP(NTEMP)=ATOR(N)
+         PEPDIR(NTEMP)=PEPDIR(N)
+         X(NTEMP)=X(N)
+         Y(NTEMP)=Y(N)
+         Z(NTEMP)=Z(N)
+         ATOMRAD(NTEMP)=ATOMRAD(N)
+      END IF
+   END DO
+
+   IF(NATOM-NDEL/=NTEMP)THEN
+      PRINT*,'ERROR IN COUNTING DELETED ATOMS'
+      STOP
+   END IF
+
+   NATOM=NTEMP
+
+!-----------
+
+   NBONDGLY=NBONDGLYSTART
+
+   DO NR=NPGSTART+1,NPG
+
+      LENGTH=0
+
+      DO JR=1,PGLEN(NR)
+         IF(ATOR(PGID(JR,NR))==-1)THEN
+            CYCLE
+         END IF
+
+         LENGTH=LENGTH+1
+
+         NA=PGID(JR,NR)
+
+         PGID(LENGTH,NR)=MAP(NA)
+
+         IF(LENGTH>1)THEN
+            NBONDGLY=NBONDGLY+1
+            BONDGLY(1,NBONDGLY)=PGID(LENGTH-1,NR)
+            BONDGLY(2,NBONDGLY)=PGID(LENGTH,NR)
+         END IF
+      END DO
+
+      PGLEN(NR)=LENGTH
+   END DO
+
+!----------------------------------
+!  CLEAN UP UNCROSSLINKED STRANDS:
+
+   NPGTEMP=NPGSTART
+
+   DO NR=NPGSTART+1,NPG
+
+      IF(PGLEN(NR)==0)THEN
+         CYCLE
+      END IF
+
+      NPGTEMP=NPGTEMP+1
+
+      PGLEN(NPGTEMP)=PGLEN(NR)
+
+      PGTYP(NPGTEMP)=PGTYP(NR)
+
+      PGDIR(NPGTEMP)=PGDIR(NR)
+
+      PGID(1:PGLEN(NR),NPGTEMP)=PGID(1:PGLEN(NR),NR)
+
+      DO NS=1,NSYN
+
+         IF(SYNPG(1,NS)==NR)THEN
+            SYNPG(1,NS)=NPGTEMP
+         END IF
+
+         IF(SYNPG(2,NS)==NR)THEN
+            SYNPG(2,NS)=NPGTEMP
+         END IF
+
+         IF(OLDSYNPG(1,NS)==NR)THEN
+            OLDSYNPG(1,NS)=NPGTEMP
+         END IF
+
+         IF(OLDSYNPG(2,NS)==NR)THEN
+            OLDSYNPG(2,NS)=NPGTEMP
+         END IF
+
+      END DO
+
+   END DO
+
+   NPG=NPGTEMP
+
+!-------------
+
+!$OMP PARALLEL &
+!$OMP DEFAULT(NONE) &
+!$OMP PRIVATE(NB) &
+!$OMP SHARED(NBONDPEP,BONDPEP,BONTYP,MAP)
+!$OMP DO SCHEDULE(GUIDED,64)
+
+   DO NB=1,NBONDPEP
+
+      IF(BONTYP(NB)==0)THEN
+         CYCLE
+      END IF
+
+      BONDPEP(1:2,NB)=MAP(BONDPEP(1:2,NB))
+
+   END DO
+
+!$OMP END DO NOWAIT
+!$OMP END PARALLEL
+
+!------------
+
+
+   DO NS=1,NSYN
+
+      IF(GLYTIP(1,NS)/=0)THEN
+         GLYTIP(1,NS)=MAP(GLYTIP(1,NS))
+      END IF
+
+      IF(GLYTIP(2,NS)/=0)THEN
+         GLYTIP(2,NS)=MAP(GLYTIP(2,NS))
+      END IF
+
+!--
+
+      IF(GLYSEC(1,NS)/=0)THEN
+         GLYSEC(1,NS)=MAP(GLYSEC(1,NS))
+      END IF
+
+      IF(GLYSEC(2,NS)/=0)THEN
+         GLYSEC(2,NS)=MAP(GLYSEC(2,NS))
+      END IF
+
+!--
+
+      DO J=1,3
+
+         IF(TPPEP(1,J,NS)/=0)THEN
+            TPPEP(1,J,NS)=MAP(TPPEP(1,J,NS))
+         END IF
+
+         IF(TPPEP(2,J,NS)/=0)THEN
+            TPPEP(2,J,NS)=MAP(TPPEP(2,J,NS))
+         END IF
+
+      END DO
+
+!--
+      IF(EDPEP(1,NS)/=0)THEN
+         EDPEP(1,NS)=MAP(EDPEP(1,NS))
+      END IF
+
+      IF(EDPEP(2,NS)/=0)THEN
+         EDPEP(2,NS)=MAP(EDPEP(2,NS))
+      END IF
+
+      IF(EDHOLD(1,NS)/=0)THEN
+         EDHOLD(1,NS)=MAP(EDHOLD(1,NS))
+         EDHOLD(2,NS)=MAP(EDHOLD(2,NS))
+      END IF
+
+   END DO
+
+
+!-----------------
+
+!$OMP PARALLEL &
+!$OMP DEFAULT(NONE) &
+!$OMP PRIVATE(NL,LENGTH,JL,NA) &
+!$OMP SHARED(NLOOP,LOOP,LOOPTYP,LOOPLEN,ATOR,DNOR,MAP)
+
+!$OMP DO SCHEDULE(GUIDED,64)
+
+   DO NL=1,NLOOP
+      IF(LOOPTYP(NL)==0)THEN
+         CYCLE
+      END IF
+
+      LENGTH=0
+
+      DO JL=1,LOOPLEN(NL)
+
+         NA=LOOP(JL,NL)
+
+         IF(ATOR(NA)==-1)THEN
+            CYCLE
+         END IF
+
+         IF(LENGTH>0)THEN
+            IF(NA==LOOP(LENGTH,NL))THEN
+               CYCLE
+            END IF
+         END IF
+
+
+         LENGTH=LENGTH+1
+
+         LOOP(LENGTH,NL)=NA
+
+      END DO
+
+      IF(LOOP(1,NL)==LOOP(LENGTH,NL))THEN
+         LENGTH=LENGTH-1
+      END IF
+
+      LOOPLEN(NL)=LENGTH
+
+      LOOP(1:LENGTH,NL)=MAP(LOOP(1:LENGTH,NL))
+
+   END DO
+
+!$OMP END DO NOWAIT
+!$OMP END PARALLEL
+
+!-------------
+
+   DNOR(NATOMSTART+1:NATOM)=DNORTEMP(NATOMSTART+1:NATOM)
+   ATOR(NATOMSTART+1:NATOM)=ATORTEMP(NATOMSTART+1:NATOM)
+
+   DEALLOCATE(MAP,DNORTEMP,ATORTEMP)
+
+   END SUBROUTINE
+
+!====================================================================
+
+   SUBROUTINE ACTIVATE(NS,SYNTHESIS,SYNLOOP,XGTASE,YGTASE,ZGTASE,X,Y,Z,NEIGLY,GLYNUM, &
+                          NLOOP,LOOP,LOOPLEN,LOOPTYP,PSTART,GMODE)
+
+   IMPLICIT NONE
+
+   INTEGER NLOOP,N,NS,CHECK,J,N1,N2,NL,ILOOP,JCHECK,GETLOOP,JEXIT,JG,GMODE
+   INTEGER,DIMENSION(:,:,:),ALLOCATABLE::NEIGLY
+   INTEGER,DIMENSION(:,:),ALLOCATABLE:: LOOP,SYNTHESIS
+   INTEGER,DIMENSION(:),ALLOCATABLE:: LOOPLEN,LOOPTYP,SYNLOOP,GLYNUM
+   DOUBLE PRECISION XLOOP,YLOOP,ZLOOP,DIST,PSTART,R,DELT,XP0,YP0,ZP0
+   DOUBLE PRECISION XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3
+
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: X,Y,Z
+   DOUBLE PRECISION,DIMENSION(:,:),ALLOCATABLE::XGTASE,YGTASE,ZGTASE
+
+
+   IF(GMODE<12)THEN
+
+!     MAKE SURE GTASE IS NOT ON A LOOP PERIPHERY:
+
+      XP0=XGTASE(1,NS)
+      YP0=2*YGTASE(1,NS)
+      ZP0=2*ZGTASE(1,NS)
+
+      XP3=XP0; YP3=0.0D0; ZP3=0.0D0
+
+      DELT=0.00001D0
+
+      JEXIT=0
+
+      DO JG=1,GLYNUM(NS)
+
+         N1=NEIGLY(1,JG,NS)
+         N2=NEIGLY(2,JG,NS)
+
+         XL1=X(N1); YL1=Y(N1); ZL1=Z(N1)
+         XL2=X(N2); YL2=Y(N2); ZL2=Z(N2)
+
+         XP1=XP0+DELT; YP1=YP0+DELT;ZP1=ZP0+DELT
+         XP2=XP0-DELT; YP2=YP0-DELT;ZP2=ZP0-DELT
+
+         CALL INTERSEC(CHECK,XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3)
+
+         IF(CHECK==1)THEN
+            JEXIT=1
+            EXIT
+         END IF
+
+         XP1=XP0-DELT; YP1=YP0+DELT;ZP1=ZP0+DELT
+         XP2=XP0+DELT; YP2=YP0-DELT;ZP2=ZP0-DELT
+
+         CALL INTERSEC(CHECK,XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3)
+      
+         IF(CHECK==1)THEN
+            JEXIT=1
+            EXIT
+         END IF
+
+         XP1=XP0+DELT; YP1=YP0-DELT;ZP1=ZP0+DELT
+         XP2=XP0-DELT; YP2=YP0+DELT;ZP2=ZP0-DELT
+
+         CALL INTERSEC(CHECK,XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3)
+      
+         IF(CHECK==1)THEN
+            JEXIT=1
+            EXIT
+         END IF
+
+         XP1=XP0+DELT; YP1=YP0+DELT;ZP1=ZP0-DELT
+         XP2=XP0-DELT; YP2=YP0-DELT;ZP2=ZP0+DELT
+
+         CALL INTERSEC(CHECK,XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3)
+      
+         IF(CHECK==1)THEN
+            JEXIT=1
+            EXIT
+         END IF
+
+      END DO
+
+      IF(JEXIT==1)THEN
+         RETURN
+      END IF
+
+      GOTO 11
+
+   END IF
+
+!  CHECK IF THE COMPLEX IS IN A POTENTIAL TRAP DUE TO STERIC HINDRANCE:
+
+   XP1=1.5D0*XGTASE(1,NS)-0.5D0*XGTASE(2,NS)
+   YP1=2*YGTASE(1,NS)
+   ZP1=2*ZGTASE(1,NS)
+
+   XP2=1.5D0*XGTASE(2,NS)-0.5D0*XGTASE(1,NS)
+   YP2=2*YGTASE(2,NS)
+   ZP2=2*ZGTASE(2,NS)
+
+   XP3=0.5D0*(XP1+XP2)
+   YP3=0.0D0; ZP3=0.0D0
+
+   JEXIT=0
+
+   DO JG=1,GLYNUM(NS)
+
+      N1=NEIGLY(1,JG,NS)
+      N2=NEIGLY(2,JG,NS)
+
+      XL1=X(N1); YL1=Y(N1); ZL1=Z(N1)
+      XL2=X(N2); YL2=Y(N2); ZL2=Z(N2)
+
+      CALL INTERSEC(CHECK,XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3)
+
+      IF(CHECK==1)THEN
+         JEXIT=1
+         EXIT
+      END IF
+
+   END DO
+
+   IF(JEXIT==1)THEN
+      RETURN
+   END IF
+
+   IF(SYNTHESIS(1,NS)==1)THEN
+      GOTO 10
+   END IF
+
+!  THE SECOND GTASE IS ALREADY ACTIVE:
+
+   IF(SYNTHESIS(2,NS)==1)THEN
+
+!     CHECK IF PROBABILITY OF ACTIVATION IS HIGH:
+
+!      JRSTART(NS)=JRSTART(NS)+1
+
+      CALL RANDOM_NUMBER(R)
+
+      IF(PSTART<R)THEN
+         RETURN
+      END IF
+
+      NL=SYNLOOP(NS)
+
+!     CHECK IF THE FIRST GTASE IS IN THE LOOP:
+
+      JCHECK=0
+
+      XP3=X(LOOP(1,NL))
+      YP3=Y(LOOP(1,NL))
+      ZP3=Z(LOOP(1,NL))
+
+      XL1=XGTASE(1,NS); YL1=2*YGTASE(1,NS); ZL1=2*ZGTASE(1,NS)
+
+      XL2=XGTASE(1,NS); YL2=0.0D0; ZL2=0.0D0
+
+      DO J=2,LOOPLEN(NL)-1
+
+         N1=LOOP(J,NL)
+
+         N2=LOOP(J+1,NL)
+
+         IF(LOOP(1,NL)==N1.OR.LOOP(1,NL)==N2)THEN
+            CYCLE
+         END IF
+
+         XP1=X(N1); YP1=Y(N1); ZP1=Z(N1)
+
+         XP2=X(N2); YP2=Y(N2); ZP2=Z(N2)
+
+         CALL INTERSEC(CHECK,XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3)
+
+         IF(CHECK==1)THEN
+            JCHECK=JCHECK+1
+         END IF
+
+      END DO
+
+      IF(MOD(JCHECK,2)==0)THEN
+         RETURN
+      END IF
+
+      SYNTHESIS(1,NS)=1
+
+      RETURN
+
+   END IF
+
+!---------------------------------------------------
+
+!  CHECK IF PROBABILITY OF ACTIVATION FOR THE FIRST GTASE IS HIGH:
+
+!   JRSTART(NS)=JRSTART(NS)+1
+
+11 CALL RANDOM_NUMBER(R)
+
+   IF(PSTART<R)THEN
+
+      IF(GMODE<12)THEN
+         RETURN
+      END IF
+
+      GOTO 10
+   END IF
+
+! --  DETERMINE THE LOOP ENCIRCLING THE FIRST TRANSGLYCOSYLASE:
+
+   DIST=5.0D0
+
+   GETLOOP=0
+
+   DO NL=1,NLOOP
+
+      IF(LOOPTYP(NL)==0)THEN
+         CYCLE
+      END IF
+
+      XLOOP=SUM(X(LOOP(1:LOOPLEN(NL),NL)))/LOOPLEN(NL)
+
+      IF(ABS(XGTASE(1,NS)-XLOOP)>DIST)THEN
+         CYCLE
+      END IF
+
+      YLOOP=SUM(Y(LOOP(1:LOOPLEN(NL),NL)))/LOOPLEN(NL)
+
+      IF(ABS(YGTASE(1,NS)-YLOOP)>DIST)THEN
+         CYCLE
+      END IF
+
+      ZLOOP=SUM(Z(LOOP(1:LOOPLEN(NL),NL)))/LOOPLEN(NL)
+
+      IF(ABS(ZGTASE(1,NS)-ZLOOP)>DIST)THEN
+         CYCLE
+      END IF
+
+!     NOW CHECK THIS LOOP:
+
+      JCHECK=0
+
+      XP3=X(LOOP(1,NL))
+      YP3=Y(LOOP(1,NL))
+      ZP3=Z(LOOP(1,NL))
+
+      XL1=XGTASE(1,NS); YL1=2*YGTASE(1,NS); ZL1=2*ZGTASE(1,NS)
+
+      XL2=XGTASE(1,NS); YL2=0.0D0; ZL2=0.0D0
+
+      DO J=2,LOOPLEN(NL)-1
+
+         N1=LOOP(J,NL)
+
+         N2=LOOP(J+1,NL)
+
+         IF(LOOP(1,NL)==N1.OR.LOOP(1,NL)==N2)THEN
+            CYCLE
+         END IF
+
+         XP1=X(N1); YP1=Y(N1); ZP1=Z(N1)
+
+         XP2=X(N2); YP2=Y(N2); ZP2=Z(N2)
+
+         CALL INTERSEC(CHECK,XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3)
+
+         IF(CHECK==1)THEN
+            JCHECK=JCHECK+1
+         END IF
+
+      END DO
+
+      IF(MOD(JCHECK,2)==1)THEN
+         ILOOP=NL
+         GETLOOP=1
+         EXIT
+      ENDIF
+
+
+   END DO
+
+   IF(GETLOOP==0)THEN
+      PRINT*,'WARNING: CANNOT IDENTIFY SYNLOOP'
+      RETURN
+   END IF
+
+!----
+
+!  CHECK IF THERE IS ANOTHER COMPLEX IN THIS LOOP:
+
+   IF(LOOPTYP(ILOOP)==2)THEN
+
+      IF(GMODE<12)THEN
+         RETURN
+      END IF
+
+      GOTO 10
+   END IF
+
+   IF(GMODE<12)THEN
+      SYNTHESIS(1:2,NS)=1
+      LOOPTYP(ILOOP)=2
+      SYNLOOP(NS)=ILOOP
+      RETURN
+   END IF
+
+!----------------
+!  CHECK IF THE OTHER TRANSGLYCOSYLASE IS IN THE SAME LOOP:
+
+   NL=ILOOP
+
+   JCHECK=0
+
+
+   XP3=X(LOOP(1,NL))
+   YP3=Y(LOOP(1,NL))
+   ZP3=Z(LOOP(1,NL))
+
+   XL1=XGTASE(2,NS); YL1=2*YGTASE(2,NS); ZL1=2*ZGTASE(2,NS)
+
+   XL2=XGTASE(2,NS); YL2=0.0D0; ZL2=0.0D0
+
+   DO J=2,LOOPLEN(NL)-1
+
+      N1=LOOP(J,NL)
+
+      N2=LOOP(J+1,NL)
+
+      IF(LOOP(1,NL)==N1.OR.LOOP(1,NL)==N2)THEN
+         CYCLE
+      END IF
+
+      XP1=X(N1); YP1=Y(N1); ZP1=Z(N1)
+
+      XP2=X(N2); YP2=Y(N2); ZP2=Z(N2)
+
+      CALL INTERSEC(CHECK,XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3)
+
+      IF(CHECK==1)THEN
+         JCHECK=JCHECK+1
+      END IF
+
+   END DO
+
+   IF(MOD(JCHECK,2)==1)THEN
+      SYNTHESIS(1,NS)=1
+      LOOPTYP(ILOOP)=2
+      SYNLOOP(NS)=ILOOP
+   END IF
+
+!===========================
+
+!  IF THE FIRST GTASE IS ALREADY ACTIVE:
+
+10 IF(SYNTHESIS(1,NS)==1)THEN
+
+!     CHECK IF PROBABILITY OF ACTIVATION IS HIGH:
+
+!      JRSTART(NS)=JRSTART(NS)+1
+
+      CALL RANDOM_NUMBER(R)
+
+      IF(PSTART<R)THEN
+         RETURN
+      END IF
+
+      NL=SYNLOOP(NS)
+
+!     CHECK IF THE SECOND GTASE IS IN THE LOOP:
+
+      JCHECK=0
+
+      XP3=X(LOOP(1,NL))
+      YP3=Y(LOOP(1,NL))
+      ZP3=Z(LOOP(1,NL))
+
+      XL1=XGTASE(2,NS); YL1=2*YGTASE(2,NS); ZL1=2*ZGTASE(2,NS)
+
+      XL2=XGTASE(2,NS); YL2=0.0D0; ZL2=0.0D0
+
+      DO J=2,LOOPLEN(NL)-1
+
+         N1=LOOP(J,NL)
+
+         N2=LOOP(J+1,NL)
+
+         IF(LOOP(1,NL)==N1.OR.LOOP(1,NL)==N2)THEN
+            CYCLE
+         END IF
+
+         XP1=X(N1); YP1=Y(N1); ZP1=Z(N1)
+
+         XP2=X(N2); YP2=Y(N2); ZP2=Z(N2)
+
+         CALL INTERSEC(CHECK,XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3)
+
+         IF(CHECK==1)THEN
+            JCHECK=JCHECK+1
+         END IF
+
+      END DO
+
+      IF(MOD(JCHECK,2)==0)THEN
+         RETURN
+      END IF
+
+      SYNTHESIS(2,NS)=1
+
+      RETURN
+
+   END IF
+!----------------------------------------------------
+
+!  CHECK IF PROBABILITY OF ACTIVATION IS HIGH:
+
+!   JRSTART(NS)=JRSTART(NS)+1
+
+   CALL RANDOM_NUMBER(R)
+
+   IF(PSTART<R)THEN
+      RETURN
+   END IF
+
+! --  DETERMINE THE LOOP ENCIRCLING THE SECOND TRANSGLYCOSYLASE:
+
+   DIST=5.0D0
+
+   GETLOOP=0
+
+   DO NL=1,NLOOP
+
+      IF(LOOPTYP(NL)==0)THEN
+         CYCLE
+      END IF
+
+      XLOOP=SUM(X(LOOP(1:LOOPLEN(NL),NL)))/LOOPLEN(NL)
+
+      IF(ABS(XGTASE(2,NS)-XLOOP)>DIST)THEN
+         CYCLE
+      END IF
+
+      YLOOP=SUM(Y(LOOP(1:LOOPLEN(NL),NL)))/LOOPLEN(NL)
+
+      IF(ABS(YGTASE(2,NS)-YLOOP)>DIST)THEN
+         CYCLE
+      END IF
+
+      ZLOOP=SUM(Z(LOOP(1:LOOPLEN(NL),NL)))/LOOPLEN(NL)
+
+      IF(ABS(ZGTASE(2,NS)-ZLOOP)>DIST)THEN
+         CYCLE
+      END IF
+
+!     NOW CHECK THIS LOOP:
+
+      JCHECK=0
+
+      XP3=X(LOOP(1,NL))
+      YP3=Y(LOOP(1,NL))
+      ZP3=Z(LOOP(1,NL))
+
+      XL1=XGTASE(2,NS); YL1=2*YGTASE(2,NS); ZL1=2*ZGTASE(2,NS)
+
+      XL2=XGTASE(2,NS); YL2=0.0D0; ZL2=0.0D0
+
+      DO J=2,LOOPLEN(NL)-1
+
+         N1=LOOP(J,NL)
+
+         N2=LOOP(J+1,NL)
+
+         IF(LOOP(1,NL)==N1.OR.LOOP(1,NL)==N2)THEN
+            CYCLE
+         END IF
+
+         XP1=X(N1); YP1=Y(N1); ZP1=Z(N1)
+
+         XP2=X(N2); YP2=Y(N2); ZP2=Z(N2)
+
+         CALL INTERSEC(CHECK,XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3)
+
+         IF(CHECK==1)THEN
+            JCHECK=JCHECK+1
+         END IF
+
+      END DO
+
+      IF(MOD(JCHECK,2)==1)THEN
+         ILOOP=NL
+         GETLOOP=1
+         EXIT
+      ENDIF
+
+   END DO
+
+   IF(GETLOOP==0)THEN
+      PRINT*,'WARNING: CANNOT IDENTIFY SYNLOOP'
+      RETURN
+   END IF
+
+!-----------------------------------------------
+
+!  CHECK IF THERE IS ANOTHER COMPLEX IN THIS LOOP:
+
+   IF(LOOPTYP(ILOOP)==2)THEN
+      RETURN
+   END IF
+
+!  CHECK IF THE OTHER TRANSGLYCOSYLASE IS IN THE SAME LOOP:
+
+   NL=ILOOP
+
+   JCHECK=0
+
+   XP3=X(LOOP(1,NL))
+   YP3=Y(LOOP(1,NL))
+   ZP3=Z(LOOP(1,NL))
+
+   XL1=XGTASE(1,NS); YL1=2*YGTASE(1,NS); ZL1=2*ZGTASE(1,NS)
+
+   XL2=XGTASE(1,NS); YL2=0.0D0; ZL2=0.0D0
+
+   DO J=2,LOOPLEN(NL)-1
+
+      N1=LOOP(J,NL)
+
+      N2=LOOP(J+1,NL)
+
+      IF(LOOP(1,NL)==N1.OR.LOOP(1,NL)==N2)THEN
+         CYCLE
+      END IF
+
+      XP1=X(N1); YP1=Y(N1); ZP1=Z(N1)
+
+      XP2=X(N2); YP2=Y(N2); ZP2=Z(N2)
+
+      CALL INTERSEC(CHECK,XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3)
+
+      IF(CHECK==1)THEN
+         JCHECK=JCHECK+1
+      END IF
+
+   END DO
+
+   IF(MOD(JCHECK,2)==1)THEN
+      SYNTHESIS(2,NS)=1
+      LOOPTYP(ILOOP)=2
+      SYNLOOP(NS)=ILOOP
+   END IF
+
+
+   END SUBROUTINE
+
+!====================================================================
+
+   SUBROUTINE FIRSTPG(JS,NS,NPG,PGID,PGLEN,PGTYP,PGDIR,NATOM,DNOR,ATOR,PEPDIR,X,Y,Z,XGTASE,YGTASE,ZGTASE, &
+              SYNPG,GTLOAD,SYNDIR,GLYTIP,JFORCE,GTATRANS,ATOMRAD,SYNRAD,XLEAD,YLEAD,ZLEAD,GMODE,JPAIR,GTAWAIT)
+
+   IMPLICIT NONE
+
+   INTEGER NPG,NATOM,JS,NS,JFORCE,GMODE
+   INTEGER, ALLOCATABLE, DIMENSION(:):: PGLEN,PGTYP,PGDIR,DNOR,ATOR,PEPDIR,SYNDIR,JPAIR,GTAWAIT
+   INTEGER, ALLOCATABLE, DIMENSION(:,:)::PGID,SYNPG,GTLOAD,GLYTIP,GTATRANS
+   DOUBLE PRECISION R,R3(3)
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:)::X,Y,Z,XLEAD,YLEAD,ZLEAD,ATOMRAD,SYNRAD
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:,:)::XGTASE,YGTASE,ZGTASE
+
+   NATOM=NATOM+1
+
+   DNOR(NATOM)=1
+   ATOR(NATOM)=1
+
+   ATOMRAD(NATOM)=SYNRAD(NS)
+
+   IF(GMODE/=12)THEN
+
+      CALL RANDOM_NUMBER(R)
+      IF(R<0.5)THEN
+         PEPDIR(NATOM)=-1
+      ELSE
+         PEPDIR(NATOM)=1
+      END IF
+
+   ELSE
+
+      IF(JS==1)THEN
+
+         IF(JPAIR(NS)<0)THEN
+            PEPDIR(NATOM)=SYNDIR(NS)
+         ELSE
+            PEPDIR(NATOM)=-SYNDIR(NS)
+         END IF
+
+      ELSE
+
+         IF(JPAIR(NS)<0)THEN
+            PEPDIR(NATOM)=-SYNDIR(NS)
+         ELSE
+            PEPDIR(NATOM)=SYNDIR(NS)
+         END IF
+
+      END IF
+
+      GTAWAIT(NS)=JS
+
+      JPAIR(NS)=2*JPAIR(NS)
+
+      IF(ABS(JPAIR(NS))==4)THEN
+         JPAIR(NS)=-JPAIR(NS)/4
+      END IF
+
+   END IF
+
+   NPG=NPG+1
+   PGID(1,NPG)=NATOM
+   PGLEN(NPG)=1
+   PGTYP(NPG)=3
+   PGDIR(NPG)=SYNDIR(NS)
+
+   GLYTIP(JS,NS)=NATOM
+
+   SYNPG(JS,NS)=NPG
+
+   GTLOAD(JS,NS)=0
+
+   JFORCE=1
+
+   GTATRANS(JS,NS)=0
+!  -------------------------------
+! REMEMBER TO MODIFY THIS AFTER CONSTRAINING ROTATION OF PBP1:
+!------------------------------------------------------
+   IF(GMODE<4)THEN
+
+      CALL RANDOM_NUMBER(R3)
+
+      X(NATOM)=XGTASE(JS,NS)+R3(1)-0.5D0!
+      Y(NATOM)=YGTASE(JS,NS)+R3(2)-0.5D0
+      Z(NATOM)=ZGTASE(JS,NS)+R3(3)-0.5D0
+
+   ELSE
+
+      X(NATOM)=XGTASE(JS,NS)-0.5D0*XLEAD(NS)
+      Y(NATOM)=YGTASE(JS,NS)-0.5D0*YLEAD(NS)
+      Z(NATOM)=ZGTASE(JS,NS)-0.5D0*ZLEAD(NS)
+   END IF
+!----------------------------------------------
+
+!if(ns==3)then
+!print*,'jpair 3',jpair(3),'gtawait 3',gtawait(3)
+!end if
+
+   END SUBROUTINE
+
+!====================================================================
+
+   SUBROUTINE ELONGATE(JS,NS,SYNPG,PGID,PGLEN,NBONDGLY,BONDGLY,X,Y,Z,XGTASE,YGTASE,ZGTASE,L_G, &
+              GLYTIP,GLYSEC,GTLOAD,NATOM,DNOR,ATOR,PEPDIR,JFORCE,GTATRANS,ATOMRAD,SYNRAD,GTAWAIT,GMODE,JPAIR)
+
+   IMPLICIT NONE
+
+   INTEGER JS,NS,NATOM,IPG,NA,NBONDGLY,JFORCE,GMODE
+   INTEGER, ALLOCATABLE, DIMENSION(:,:)::PGID,BONDGLY,GTATRANS,GTLOAD,SYNPG,GLYTIP,GLYSEC
+   INTEGER, ALLOCATABLE, DIMENSION(:)::PGLEN,DNOR,ATOR,PEPDIR,GTAWAIT,JPAIR
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:)::X,Y,Z,ATOMRAD,SYNRAD
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:,:)::XGTASE,YGTASE,ZGTASE
+   DOUBLE PRECISION DX,DY,DZ,DIST,L_G
+
+   IPG=SYNPG(JS,NS)
+   NA=PGID(PGLEN(IPG),IPG)
+
+   DX=XGTASE(JS,NS)-X(NA)
+   DY=YGTASE(JS,NS)-Y(NA)
+   DZ=ZGTASE(JS,NS)-Z(NA)
+
+   DIST=SQRT(DX**2+DY**2+DZ**2)
+
+   IF(DIST<=L_G+0.1D0)THEN
+      RETURN
+   END IF
+
+   NATOM=NATOM+1
+
+   DNOR(NATOM)=1
+   ATOR(NATOM)=1
+
+   ATOMRAD(NATOM)=SYNRAD(NS)
+
+   PEPDIR(NATOM)=-PEPDIR(NA)
+
+   PGLEN(IPG)=PGLEN(IPG)+1
+
+   PGID(PGLEN(IPG),IPG)=NATOM
+
+   X(NATOM)=X(NA)+DX*L_G/DIST
+   Y(NATOM)=Y(NA)+DY*L_G/DIST
+   Z(NATOM)=Z(NA)+DZ*L_G/DIST
+
+   NBONDGLY=NBONDGLY+1
+
+   BONDGLY(1,NBONDGLY)=NA
+   BONDGLY(2,NBONDGLY)=NATOM
+
+   GLYTIP(JS,NS)=NATOM
+   GLYSEC(JS,NS)=NA
+
+   GTLOAD(JS,NS)=0
+
+   JFORCE=1
+
+   GTATRANS(JS,NS)=0
+
+   IF(GMODE==12)THEN
+      GTAWAIT(NS)=JS
+
+      JPAIR(NS)=2*JPAIR(NS)
+
+      IF(ABS(JPAIR(NS))==4)THEN
+         JPAIR(NS)=-JPAIR(NS)/4
+      END IF
+
+   END IF
+
+
+   END SUBROUTINE
+
+!====================================================================
+
+   SUBROUTINE CRLK2SAC(JS,NS,XTPASE,YTPASE,ZTPASE,TPPEP,SYNPG,PGID,PGLEN,BONDPEP,BONTYP, &
+                       PEPDIR,X,Y,Z,SYNLOOP,LOOP,LOOPLEN,DNOR,ATOR,EDHOLD,EDLOCKIN,GMODE,D0)
+
+   IMPLICIT NONE
+
+   INTEGER JS,NS,NA,IPG1,IPG2,ILOOP,GMODE
+   INTEGER JCYCLE,JR,N,J,NB,LOLEN,JL,NP,JCHECK,CHECK,N1,N2
+
+   INTEGER, ALLOCATABLE, DIMENSION(:,:,:):: TPPEP
+   INTEGER, ALLOCATABLE, DIMENSION(:,:):: PGID,LOOP,BONDPEP,SYNPG,EDHOLD
+   INTEGER, ALLOCATABLE, DIMENSION(:):: PGLEN,LOOPLEN,DNOR,ATOR,PEPDIR,SYNLOOP,BONTYP,EDLOCKIN
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:):: X,Y,Z
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:,:):: XTPASE,YTPASE,ZTPASE
+
+   DOUBLE PRECISION DX,DY,DZ,DIST,PROB,R,D0
+   DOUBLE PRECISION XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3
+
+   IF(JS<3)THEN
+      IPG1=SYNPG(1,NS)
+      IPG2=SYNPG(2,NS)
+   ELSE
+      IPG1=SYNPG(2,NS)
+      IPG2=SYNPG(1,NS)
+   END IF
+
+
+   ILOOP=SYNLOOP(NS)
+
+   LOLEN=LOOPLEN(ILOOP)
+
+
+   NA=TPPEP(1,JS,NS)
+
+
+
+   DO J=1,LOLEN
+
+      N=LOOP(J,ILOOP)
+
+!     PEPTIDE MUST BE ACCEPTOR:
+
+      IF(ATOR(N)/=1)THEN
+         CYCLE
+      END IF
+
+!     TRIMERIC CROSSLINKS ONLY IN THE FINAL MODEL:
+
+      IF(DNOR(N)==0.AND.GMODE<13)THEN
+         CYCLE
+      END IF
+
+!     MATURATION OF PEPTIDE:
+
+      IF(DNOR(N)==1.AND.GMODE>7.AND.GMODE<13)THEN
+         CYCLE 
+      END IF
+
+!------------------------------------------------------------
+!     PAIRED TRANSPEPTIDASES:
+
+      IF(PEPDIR(N)==PEPDIR(NA).AND.GMODE>6)THEN
+         CYCLE
+      END IF
+
+      IF((X(NA)-X(N))*PEPDIR(N)<-1.0D0.AND.GMODE>6)THEN
+         CYCLE
+      END IF
+!-----------------------------------------------------------
+!     MAKE SURE THE PEPTIDE POINTING INWARD:
+
+      IF(DNOR(N)/=0.AND.GMODE>6)THEN
+
+         XL1=X(N)+0.5D0*PEPDIR(N)
+         YL1=2*Y(N)
+         ZL1=2*Z(N)
+
+         XL2=XL1
+         YL2=0.0D0; ZL2=0.0D0
+
+         XP3=X(LOOP(1,ILOOP))
+         YP3=Y(LOOP(1,ILOOP))
+         ZP3=Z(LOOP(1,ILOOP))
+
+         JCHECK=0
+
+         DO JL=2,LOLEN-1
+
+            N1=LOOP(JL,ILOOP)
+
+            N2=LOOP(JL+1,ILOOP)
+
+            IF(LOOP(1,ILOOP)==N1.OR.LOOP(1,ILOOP)==N2)THEN
+               CYCLE
+            END IF
+
+            XP1=X(N1); YP1=Y(N1); ZP1=Z(N1)
+
+            XP2=X(N2); YP2=Y(N2); ZP2=Z(N2)
+
+            CALL INTERSEC(CHECK,XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3)
+
+            IF(CHECK==1)THEN
+               JCHECK=JCHECK+1
+            END IF
+
+         END DO
+
+         IF(MOD(JCHECK,2)==0)THEN
+            CYCLE
+         END IF
+
+      ELSEIF(DNOR(N)==0)THEN ! SO THIS COULD BE TRIMERIC CROSSLINK FORMATION
+
+         IF(EDLOCKIN(NS)==0)THEN
+            CYCLE
+         END IF
+
+         NB=EDHOLD(3,NS)
+
+         IF(BONDPEP(1,NB)/=N)THEN
+            CYCLE
+         END IF
+
+      END IF
+
+!-----------------------------------------------------------
+!     PEPTIDES MUST NOT BE ON GROWING STRANDS:
+
+      JCYCLE=0
+
+      DO JR=1,PGLEN(IPG1)
+         IF(PGID(JR,IPG1)==N)THEN
+            JCYCLE=1
+            EXIT
+         END IF
+      END DO
+
+      IF(JCYCLE==1)THEN
+         CYCLE
+      END IF
+
+      IF(IPG2>0)THEN
+
+         DO JR=1,PGLEN(IPG2)
+            IF(PGID(JR,IPG2)==N)THEN
+               JCYCLE=1
+               EXIT
+            END IF
+         END DO
+
+         IF(JCYCLE==1)THEN
+            CYCLE
+         END IF
+
+      END IF
+
+      DX=XTPASE(JS,NS)-X(N)
+      DY=YTPASE(JS,NS)-Y(N)
+      DZ=ZTPASE(JS,NS)-Z(N)
+
+      DIST=SQRT(DX**2+DY**2+DZ**2)
+
+      IF(DIST>D0)THEN
+         CYCLE
+      END IF
+
+      PROB=(1.0-DIST/D0)**2
+
+      CALL RANDOM_NUMBER(R)
+
+      IF(PROB>R)THEN
+
+         TPPEP(2,JS,NS)=N
+
+         EXIT
+
+      END IF
+
+   END DO
+
+
+   END SUBROUTINE
+
+!====================================================================
+
+   SUBROUTINE PAIRCRLK(NS,XTPASE,YTPASE,ZTPASE,TPPEP,SYNPG,PGID,PGLEN,PEPDIR,X,Y,Z,ATOR,CRLKAGE,D0)
+
+   IMPLICIT NONE
+   INTEGER NS,IPG,NA,N
+   INTEGER, ALLOCATABLE, DIMENSION(:,:,:)::TPPEP
+   INTEGER, ALLOCATABLE, DIMENSION(:,:):: PGID,SYNPG,CRLKAGE
+   INTEGER, ALLOCATABLE, DIMENSION(:):: PGLEN,PEPDIR
+   INTEGER, ALLOCATABLE, DIMENSION(:):: ATOR
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:):: X,Y,Z
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:,:)::XTPASE,YTPASE,ZTPASE
+   DOUBLE PRECISION DX,DY,DZ,DIST,PROB,R,D0
+
+   IPG=SYNPG(2,NS)
+
+   IF(IPG==0)THEN
+      RETURN
+   END IF
+
+
+   NA=TPPEP(1,2,NS)
+
+   N=PGID(PGLEN(IPG),IPG)
+
+   IF(PEPDIR(N)==PEPDIR(NA))THEN
+      RETURN
+   END IF
+
+   
+   IF(ATOR(N)==0)THEN
+      RETURN
+   END IF
+
+   DX=XTPASE(2,NS)-X(N)
+   DY=YTPASE(2,NS)-Y(N)
+   DZ=ZTPASE(2,NS)-Z(N)
+
+   DIST=SQRT(DX**2+DY**2+DZ**2)
+
+   IF(DIST<D0)THEN
+
+      PROB=(1.0D0-DIST/D0)**2
+
+      CALL RANDOM_NUMBER(R)
+
+      IF(PROB>R)THEN
+         TPPEP(2,2,NS)=N
+      END IF
+
+   END IF
+
+   END SUBROUTINE
+
+!====================================================================
+
+   SUBROUTINE CROSSSIGNAL(NS,JS,TPPEP,X,Y,Z,XGTASE,YGTASE,ZGTASE,SIGCROSS,DELTA)
+
+   IMPLICIT NONE
+
+   INTEGER NS,JS,JS1,JS2,N1,N2,CHECK
+   INTEGER, ALLOCATABLE, DIMENSION(:,:)::SIGCROSS
+   INTEGER, ALLOCATABLE, DIMENSION(:,:,:)::TPPEP
+
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:)::X,Y,Z
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:,:)::XGTASE,YGTASE,ZGTASE
+   DOUBLE PRECISION DX,DY,DZ,DIST2,DELTA
+   DOUBLE PRECISION XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3
+
+   N1=TPPEP(1,JS,NS)
+   N2=TPPEP(2,JS,NS)
+
+   DX=X(N2)-X(N1)
+   DY=Y(N2)-Y(N1)
+   DZ=Z(N2)-Z(N1)
+
+   DIST2=DX*DX+DY*DY+DZ*DZ
+
+   IF(DIST2>16.0D0)THEN
+      RETURN
+   END IF
+
+   IF(JS==1.OR.JS==3)THEN
+
+      JS1=(JS+1)/2
+      JS2=(5-JS)/2
+
+      XL1=XGTASE(JS1,NS)
+      YL1=YGTASE(JS1,NS)
+      ZL1=ZGTASE(JS1,NS)
+
+      XL2=XGTASE(JS2,NS)
+      YL2=YGTASE(JS2,NS)
+      ZL2=ZGTASE(JS2,NS)
+
+      XL1=XL1+(XL1-XL2)*DELTA
+      YL1=YL1+(YL1-YL2)*DELTA
+      ZL1=ZL1+(ZL1-ZL2)*DELTA
+
+
+      XP1=X(N1); YP1=2*Y(N1); ZP1=2*Z(N1)
+
+      XP2=X(N2); YP2=2*Y(N2); ZP2=2*Z(N2)
+
+      XP3=0.5*(XP1+XP2)
+      YP3=0.0D0
+      ZP3=0.0D0
+
+      XP1=2*XP1-XP3
+
+      XP2=2*XP2-XP3
+
+      CALL INTERSEC(CHECK,XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3)
+
+      IF(CHECK==1)THEN
+         RETURN
+      END IF
+
+   END IF
+
+   SIGCROSS(JS,NS)=1
+
+   END SUBROUTINE
+
+!====================================================================
+
+   SUBROUTINE SEARCHPATH(NATOM,ILOOP,LOOP,LOOPLEN,NBONDGLY,BONDGLY,NBONDPEP,BONDPEP,BONTYP,NSTART,NSTOP,IPATH,IPLEN)
+
+   IMPLICIT NONE
+   INTEGER NATOM,ILOOP,NBONDGLY,NBONDPEP,NSTART,NSTOP,IPLEN,IPATH(100),LENGTHSET,NPATHSET
+   INTEGER ILEN,NB,N1,N2,NPATH,JSTOP,JSTEP,JMOVE,NP,NPATH0,LENGTH,NTIP,J,NA,JRETURN
+   INTEGER, ALLOCATABLE, DIMENSION(:)::LOOPLEN,BONTYP,MARKLOOP,PARTLEN,CHECK,PATHLEN,PATHTYP
+   INTEGER, ALLOCATABLE, DIMENSION(:,:)::LOOP,BONDGLY,BONDPEP,PARTNER,PATH
+
+   ALLOCATE(MARKLOOP(NATOM))
+
+   MARKLOOP=0
+
+   MARKLOOP(LOOP(1:LOOPLEN(ILOOP),ILOOP))=1
+
+   IF(MARKLOOP(NSTART)==1)THEN
+      IPATH(1)=NSTART
+      IPLEN=1
+      DEALLOCATE(MARKLOOP)
+      RETURN
+   END IF
+
+   IPLEN=0
+
+   ALLOCATE(PARTNER(4,NATOM),PARTLEN(NATOM))
+   PARTNER=0
+   PARTLEN=0
+
+   DO NB=1,NBONDGLY
+
+      N1=BONDGLY(1,NB)
+      N2=BONDGLY(2,NB)
+
+      PARTLEN(N1)=PARTLEN(N1)+1
+      PARTNER(PARTLEN(N1),N1)=N2
+
+      PARTLEN(N2)=PARTLEN(N2)+1
+      PARTNER(PARTLEN(N2),N2)=N1
+
+   END DO
+
+   DO NB=1,NBONDPEP
+
+      IF(BONTYP(NB)==0)THEN
+         CYCLE
+      END IF
+
+      N1=BONDPEP(1,NB)
+      N2=BONDPEP(2,NB)
+
+      PARTLEN(N1)=PARTLEN(N1)+1
+      PARTNER(PARTLEN(N1),N1)=N2
+
+      PARTLEN(N2)=PARTLEN(N2)+1
+      PARTNER(PARTLEN(N2),N2)=N1
+
+   END DO
+
+!---------
+   NPATHSET=500
+   LENGTHSET=100
+   ALLOCATE(PATH(LENGTHSET,NPATHSET),PATHLEN(NPATHSET),PATHTYP(NPATHSET))
+
+   ALLOCATE(CHECK(NATOM))
+   CHECK=0
+
+   NPATH=1
+
+   PATH(1,1)=NSTART ! THIS IS THE START
+
+   PATHLEN(1)=1
+
+   PATHTYP(1)=1
+
+   CHECK(NSTART)=1
+   CHECK(NSTOP)=1
+
+   JSTOP=0
+   JRETURN=0
+
+   DO JSTEP=1,1000
+
+      JMOVE=0
+
+      NPATH0=NPATH
+
+      DO NP=1,NPATH0
+
+         IF(PATHTYP(NP)==0)THEN
+            CYCLE
+         END IF
+
+         LENGTH=PATHLEN(NP)
+
+         NTIP=PATH(PATHLEN(NP),NP)
+
+         IF(PARTLEN(NTIP)>0)THEN
+
+            DO J=1,PARTLEN(NTIP)
+
+               NA=PARTNER(J,NTIP)
+
+               IF(CHECK(NA)==1)THEN
+                  CYCLE
+               END IF
+
+               IF(LENGTH==LENGTHSET)THEN
+                  PRINT*,'PATH TOO LONG'
+                  JRETURN=1
+                  JSTOP=1
+                  EXIT
+               END IF
+
+               CHECK(NA)=1
+
+               IF(LENGTH==PATHLEN(NP))THEN
+
+                  PATHLEN(NP)=LENGTH+1
+
+                  PATH(LENGTH+1,NP)=NA
+
+                  IF(MARKLOOP(NA)==1)THEN
+                     JSTOP=1
+                     PATHTYP(NP)=2
+                     JMOVE=1
+                     EXIT
+                  END IF
+
+               ELSE
+
+                  NPATH=NPATH+1
+
+                  IF(NPATH>NPATHSET)THEN
+                     PRINT*,'TOO MANY PATHS TO SEARCH'
+                     JRETURN=1
+                     JSTOP=1
+                     EXIT
+                  END IF
+
+                  PATH(1:LENGTH,NPATH)=PATH(1:LENGTH,NP)
+
+                  PATH(LENGTH+1,NPATH)=NA
+
+                  PATHTYP(NPATH)=1
+
+                  PATHLEN(NPATH)=LENGTH+1
+
+                  IF(MARKLOOP(NA)==1)THEN
+                     JSTOP=1
+                     PATHTYP(NPATH)=2
+                     JMOVE=1
+                     EXIT
+                  END IF
+
+               END IF
+
+               IF(JSTOP==1)THEN
+                  EXIT
+               END IF
+
+               JMOVE=1
+
+            END DO
+
+         END IF
+
+         IF(LENGTH==PATHLEN(NP))THEN
+            PATHTYP(NP)=0
+         END IF
+
+         IF(JSTOP==1)THEN
+            EXIT
+         END IF
+
+      END DO
+
+      IF(JMOVE==0)THEN
+         EXIT
+      END IF
+
+      IF(JSTOP==1)THEN
+         EXIT
+      END IF
+
+
+   END DO
+
+   IF(JRETURN==1)THEN
+      DEALLOCATE(MARKLOOP,PARTNER,PARTLEN,CHECK,PATH,PATHLEN,PATHTYP)
+      RETURN
+   END IF
+
+   DO NP=1,NPATH
+
+      IF(PATHTYP(NP)==2)THEN
+         IPLEN=PATHLEN(NP)
+         IPATH(1:IPLEN)=PATH(1:IPLEN,NP)
+      END IF
+
+   END DO
+
+   DEALLOCATE(MARKLOOP,PARTNER,PARTLEN,CHECK,PATH,PATHLEN,PATHTYP)
+
+   END SUBROUTINE
+
+!====================================================================
+
+   SUBROUTINE POSTCRLK(JS,NS,TPPEP,CRLKAGE,SIGCROSS,SYNLOOP,NATOM,DNOR,ATOR,X,Y,Z, &
+                       XGTASE,YGTASE,ZGTASE,NLOOP,NLOOPDEL,LOOP,LOOPLEN,LOOPTYP, &
+                       NBONDGLY,BONDGLY,NBONDPEP,NBONDDEL,BONDPEP,BONTYP,JFORCE,EDPEP,JDEACT,GMODE)
+
+
+   IMPLICIT NONE
+
+   INTEGER JS,NS,NATOM,NLOOP,NLOOPDEL,NBONDGLY,NBONDPEP,NBONDDEL,JFORCE,NB,ILOOP,GMODE
+   INTEGER NA1,NA2,NSTART1,NSTART2,NSTOP1,NSTOP2,LEN1,LEN2,J1,J2,JL,J,JDEL,LOLEN,CHECK,JCHECK
+   INTEGER PATH1(100),PATH2(100)
+
+   INTEGER, ALLOCATABLE, DIMENSION(:)::SYNLOOP,DNOR,ATOR,LOOPLEN,LOOPTYP,BONTYP,JDEACT
+   INTEGER, ALLOCATABLE, DIMENSION(:,:)::CRLKAGE,SIGCROSS,LOOP,BONDGLY,BONDPEP,EDPEP
+   INTEGER, ALLOCATABLE, DIMENSION(:,:,:)::TPPEP
+
+   DOUBLE PRECISION XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3
+
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:)::X,Y,Z
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:,:)::XGTASE,YGTASE,ZGTASE
+
+   JFORCE=1
+
+   NA1=TPPEP(1,JS,NS)
+   NA2=TPPEP(2,JS,NS)
+
+   TPPEP(1:2,JS,NS)=0
+
+   NBONDPEP=NBONDPEP+1
+
+   BONTYP(NBONDPEP)=1
+
+   BONDPEP(1,NBONDPEP)=NA1
+
+   BONDPEP(2,NBONDPEP)=NA2
+
+   DNOR(NA1)=0
+
+   ATOR(NA2)=0
+
+   IF(DNOR(NA2)==0)THEN
+
+      DO NB=1,NBONDPEP-1
+
+         IF(BONTYP(NB)==0)THEN
+            CYCLE
+         END IF
+
+         IF(BONDPEP(1,NB)==NA2)THEN
+            BONTYP(NB)=2
+            EXIT
+         END IF
+
+      END DO
+
+   END IF
+
+   IF(JS==1)THEN
+
+      CRLKAGE(1,NS)=CRLKAGE(1,NS)+1
+   ELSEIF(JS==2)THEN
+
+      CRLKAGE(1,NS)=CRLKAGE(1,NS)+1
+
+      IF(GMODE>=12)THEN
+         CRLKAGE(2,NS)=CRLKAGE(2,NS)+1
+      END IF
+
+   ELSE
+
+      CRLKAGE(2,NS)=CRLKAGE(2,NS)+1
+   END IF
+
+   SIGCROSS(JS,NS)=0
+
+   IF(EDPEP(1,NS)==NA2)THEN
+      EDPEP(1,NS)=0
+   END IF
+
+   IF(EDPEP(2,NS)==NA2)THEN
+      EDPEP(2,NS)=0
+   END IF
+
+!---------------------------------------
+
+   ILOOP=SYNLOOP(NS)
+
+   IF(JS==1)THEN
+
+      NSTART1=NA2
+
+      NSTOP1=NA1
+
+      NSTART2=NA1
+
+      NSTOP2=NA2
+
+   ELSE
+
+      NSTART1=NA1
+
+      NSTOP1=NA2
+
+      NSTART2=NA2
+
+      NSTOP2=NA1
+
+   END IF
+
+   CALL SEARCHPATH(NATOM,ILOOP,LOOP,LOOPLEN,NBONDGLY,BONDGLY,NBONDPEP,BONDPEP,BONTYP,NSTART1,NSTOP1,PATH1,LEN1)
+
+
+   IF(LEN1==0)THEN
+      RETURN
+   END IF
+
+   CALL SEARCHPATH(NATOM,ILOOP,LOOP,LOOPLEN,NBONDGLY,BONDGLY,NBONDPEP,BONDPEP,BONTYP,NSTART2,NSTOP2,PATH2,LEN2)
+
+   IF(LEN2==0)THEN
+      RETURN
+   END IF
+
+!  NA1 AND NA2 ARE IN DIFFERENT ROLES:
+
+   NA1=PATH1(LEN1)
+
+   NA2=PATH2(LEN2)
+
+   J1=0
+   J2=0
+
+   DO JL=1,LOOPLEN(ILOOP)
+
+      IF(LOOP(JL,ILOOP)==NA1)THEN
+         J1=JL
+      ELSEIF(LOOP(JL,ILOOP)==NA2)THEN
+         J2=JL
+      END IF
+
+   END DO
+
+   IF(J1==0.OR.J2==0)THEN
+      PRINT*,'CHECK ERROR'
+      PRINT*,'PATH 1',LEN1,PATH1(1:LEN1)
+      PRINT*,'PATH 2',LEN2,PATH2(1:LEN2)
+      PRINT*,'LOOP',LOOP(1:LOOPLEN(ILOOP),ILOOP)
+
+      BONTYP(NBONDPEP)=0
+      NBONDDEL=NBONDDEL+1
+
+      DNOR(BONDPEP(1,NBONDPEP))=-1
+      ATOR(BONDPEP(2,NBONDPEP))=1
+
+      JDEACT(NS)=1
+
+      RETURN
+
+   END IF
+
+!  THE FIRST LOOP:
+
+   NLOOP=NLOOP+1
+
+   LOOPTYP(NLOOP)=1
+
+   LOLEN=LEN1
+
+   LOOP(1:LOLEN,NLOOP)=PATH1(1:LEN1)
+
+   JDEL=J2-J1
+
+   IF(JDEL<0)THEN
+      JDEL=JDEL+LOOPLEN(ILOOP)
+   END IF
+
+   DO J=1,JDEL-1
+
+      JL=J+J1
+
+      IF(JL>LOOPLEN(ILOOP))THEN
+         JL=JL-LOOPLEN(ILOOP)
+      END IF
+
+      LOLEN=LOLEN+1
+
+      LOOP(LOLEN,NLOOP)=LOOP(JL,ILOOP)
+
+   END DO
+
+   DO J=LEN2,1,-1
+
+      LOLEN=LOLEN+1
+
+      LOOP(LOLEN,NLOOP)=PATH2(J)
+
+   END DO
+
+   LOOPLEN(NLOOP)=LOLEN
+
+!  THE SECOND LOOP, ALSO THE NEW SYNLOOP:
+
+   NLOOP=NLOOP+1
+
+   LOOPTYP(NLOOP)=1
+
+
+   LOLEN=LEN2
+
+   LOOP(1:LOLEN,NLOOP)=PATH2(1:LEN2)
+
+   JDEL=J1-J2
+
+   IF(JDEL<0)THEN
+      JDEL=JDEL+LOOPLEN(ILOOP)
+   END IF
+
+   DO J=1,JDEL-1
+
+      JL=J+J2
+
+      IF(JL>LOOPLEN(ILOOP))THEN
+         JL=JL-LOOPLEN(ILOOP)
+      END IF
+
+      LOLEN=LOLEN+1
+
+      LOOP(LOLEN,NLOOP)=LOOP(JL,ILOOP)
+
+   END DO
+
+   DO J=LEN1,1,-1
+
+      LOLEN=LOLEN+1
+
+      LOOP(LOLEN,NLOOP)=PATH1(J)
+
+   END DO
+
+   LOOPLEN(NLOOP)=LOLEN
+
+!  DELETE ILOOP:
+
+   NLOOPDEL=NLOOPDEL+1
+
+   LOOPTYP(ILOOP)=0
+
+   IF(GMODE>6)THEN
+      SYNLOOP(NS)=NLOOP
+      LOOPTYP(NLOOP)=2
+
+   ELSE ! DETERMINE SYNLOOP THE HARD WAY
+
+      XP3=X(LOOP(1,NLOOP))
+      YP3=Y(LOOP(1,NLOOP))
+      ZP3=Z(LOOP(1,NLOOP))
+
+      XL1=XGTASE(1,NS)
+      YL1=2*YGTASE(1,NS)
+      ZL1=2*ZGTASE(1,NS)
+
+      XL2=XL1; YL2=0.0D0; ZL2=0.0D0
+
+      JCHECK=0
+
+      DO J=2,LOOPLEN(NLOOP)-1
+
+         NA1=LOOP(J,NLOOP)
+
+         NA2=LOOP(J+1,NLOOP)
+
+         IF(LOOP(1,NLOOP)==NA1.OR.LOOP(1,NLOOP)==NA2)THEN
+            CYCLE
+         END IF
+
+         XP1=X(NA1); YP1=Y(NA1); ZP1=Z(NA1)
+
+         XP2=X(NA2); YP2=Y(NA2); ZP2=Z(NA2)
+
+         CALL INTERSEC(CHECK,XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3)
+
+         IF(CHECK==1)THEN
+            JCHECK=JCHECK+1
+         END IF
+
+      END DO
+
+      IF(MOD(JCHECK,2)==1)THEN
+         ILOOP=NLOOP
+      ELSE
+         ILOOP=NLOOP-1
+      END IF
+
+      LOOPTYP(ILOOP)=2
+
+      SYNLOOP(NS)=ILOOP
+
+   END IF
+
+   END SUBROUTINE
+
+!====================================================================
+
+   SUBROUTINE SETSIGBOND(NBONDPEP,BONDPEP,BONTYP,NSIG,SIGBOND)
+
+   IMPLICIT NONE
+   INTEGER NSIG,NBONDPEP,NB
+   INTEGER, ALLOCATABLE, DIMENSION(:)::BONTYP
+   INTEGER, ALLOCATABLE, DIMENSION(:,:)::BONDPEP,SIGBOND
+
+   NSIG=0
+
+   DO NB=1,NBONDPEP
+
+      IF(BONTYP(NB)==2)THEN
+         NSIG=NSIG+1
+         SIGBOND(1:2,NSIG)=BONDPEP(1:2,NB)
+      END IF
+
+   END DO
+
+   END SUBROUTINE
+
+!====================================================================
+
+   SUBROUTINE BENDING(NS,SYNPG,PGID,PGLEN,CRLKAGE,DNOR,ATOR,X,Y,Z,XGTASE,YGTASE,ZGTASE,BETA,PI,JBEND)
+
+   IMPLICIT NONE
+
+   INTEGER NS,IPG,LENGTH,J,JCRLK,NTIP,NPREV,N1,N2,N3,JBEND
+
+   INTEGER,DIMENSION(:,:),ALLOCATABLE::PGID,CRLKAGE,SYNPG
+   INTEGER,DIMENSION(:),ALLOCATABLE:: PGLEN,DNOR,ATOR
+
+   DOUBLE PRECISION PBEND,BETA,PI,E0,EBEND,ARG,THET
+   DOUBLE PRECISION DX1,DY1,DZ1,DX2,DY2,DZ2,DIST1,DIST2
+
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE::X,Y,Z
+   DOUBLE PRECISION,DIMENSION(:,:),ALLOCATABLE::XGTASE,YGTASE,ZGTASE
+
+   JBEND=0
+
+   IF(CRLKAGE(1,NS)==0)THEN
+      RETURN
+   END IF
+
+   E0=PI**2/9/9
+
+   IPG=SYNPG(1,NS)
+
+   LENGTH=PGLEN(IPG)
+
+   DO J=LENGTH,1,-1
+
+      IF(DNOR(PGID(J,IPG))==0.OR.ATOR(PGID(J,IPG))==0)THEN
+         JCRLK=J
+         EXIT
+      END IF
+
+   END DO
+
+   THET=0.0D0
+   EBEND=0.0D0
+
+   IF(JCRLK<LENGTH)THEN
+
+      DO J=JCRLK,LENGTH-1
+
+         IF(J==1)THEN
+            CYCLE
+         END IF
+
+         N1=PGID(J+1,IPG)
+
+         N2=PGID(J,IPG)
+
+         N3=PGID(J-1,IPG)
+
+         DX1=X(N1)-X(N2)
+         DY1=Y(N1)-Y(N2)
+         DZ1=Z(N1)-Z(N2)
+
+         DIST1=SQRT(DX1**2+DY1**2+DZ1**2)
+
+         DX2=X(N2)-X(N3)
+         DY2=Y(N2)-Y(N3)
+         DZ2=Z(N2)-Z(N3)
+
+         DIST2=SQRT(DX2**2+DY2**2+DZ2**2)+BETA
+
+         ARG=(DX1*DX2+DY1*DY2+DZ1*DZ2)/DIST1/DIST2
+
+         THET=ACOS(ARG)+THET
+
+         EBEND=EBEND+THET**2
+
+      END DO
+
+   END IF
+
+   IF(LENGTH>1)THEN
+
+      NTIP=PGID(LENGTH,IPG)
+
+      NPREV=PGID(LENGTH-1,IPG)
+
+      DX1=XGTASE(1,NS)-X(NTIP)
+      DY1=YGTASE(1,NS)-Y(NTIP)
+      DZ1=ZGTASE(1,NS)-Z(NTIP)
+
+      DIST1=SQRT(DX1**2+DY1**2+DZ1**2)
+
+      DX2=X(NTIP)-X(NPREV)
+      DY2=Y(NTIP)-Y(NPREV)
+      DZ2=Z(NTIP)-Z(NPREV)
+
+      DIST2=SQRT(DX2**2+DY2**2+DZ2**2)+BETA
+
+      ARG=(DX1*DX2+DY1*DY2+DZ1*DZ2)/DIST1/DIST2
+
+      THET=ACOS(ARG)+THET
+
+      EBEND=EBEND+THET**2
+
+   END IF
+
+   PBEND=EBEND/E0
+
+   IF(PBEND>100.0D0)THEN
+      JBEND=1
+      PRINT*,'DEACTIVATE DUE TO BENDING SYNCOMP',NS
+   END IF
+
+   END SUBROUTINE
+
+!====================================================================
+
+   SUBROUTINE MATURATION(NATOM,DNOR,SYNPG,PGID,PGLEN,SYNLOOP,LOOP,LOOPLEN,NSYN,PMATURE)
+
+   IMPLICIT NONE
+
+   INTEGER NATOM,NSYN,NA,NS,ILOOP,IPG
+   INTEGER, ALLOCATABLE, DIMENSION(:)::SYNLOOP,LOOPLEN,PGLEN,DNOR,MARK
+   INTEGER, ALLOCATABLE, DIMENSION(:,:)::LOOP,PGID,SYNPG
+   DOUBLE PRECISION PMATURE
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:)::R
+
+   ALLOCATE(MARK(NATOM),R(NATOM))
+
+   MARK=0
+
+   DO NS=1,NSYN
+
+      ILOOP=SYNLOOP(NS)
+
+      IF(ILOOP>0)THEN
+         MARK(LOOP(1:LOOPLEN(ILOOP),ILOOP))=1
+      END IF
+
+      IPG=SYNPG(1,NS)
+
+      IF(IPG>0)THEN
+         MARK(PGID(1:PGLEN(IPG),IPG))=1
+      END IF
+
+      IPG=SYNPG(2,NS)
+
+      IF(IPG>0)THEN
+         MARK(PGID(1:PGLEN(IPG),IPG))=1
+      END IF
+
+   END DO
+
+   CALL RANDOM_NUMBER(R)
+
+   DO NA=1,NATOM
+
+      IF(DNOR(NA)/=1)THEN
+         CYCLE
+      END IF
+
+      IF(MARK(NA)==1)THEN
+         CYCLE
+      END IF
+
+      IF(PMATURE>R(NA))THEN
+         DNOR(NA)=-1
+      END IF
+
+   END DO
+
+   DEALLOCATE(MARK,R)
+
+   END SUBROUTINE
+
+!====================================================================
+
+   SUBROUTINE ENDOPEP(NS,SYNLOOP,LOOP,LOOPLEN,NBONDPEP,BONDPEP,BONTYP,SYNPG,OLDSYNPG,PGID,PGLEN,EDHOLD, &
+                      DNOR,X,Y,Z,XEDASE,YEDASE,ZEDASE,XEDASEOLD,YEDASEOLD,ZEDASEOLD,GMODE)
+
+
+   IMPLICIT NONE
+
+   INTEGER NS,N1,N2,ILOOP,NBGET,JGET,NBONDPEP,IPG1,IPG2,JR,JCYCLE,JL,NB,CHECK,GMODE,JP,OLDIPG1,OLDIPG2
+
+   INTEGER, ALLOCATABLE, DIMENSION(:)::SYNLOOP,LOOPLEN,BONTYP,PGLEN,DNOR
+   INTEGER, ALLOCATABLE, DIMENSION(:,:)::EDHOLD,LOOP,BONDPEP,PGID,SYNPG,OLDSYNPG
+
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:)::X,Y,Z,XEDASE,YEDASE,ZEDASE,XEDASEOLD,YEDASEOLD,ZEDASEOLD
+   DOUBLE PRECISION DX,DY,DZ,R
+   DOUBLE PRECISION XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3
+
+   XL1=XEDASE(NS)
+   YL1=YEDASE(NS)
+   ZL1=ZEDASE(NS)
+
+   XL2=XEDASEOLD(NS)
+   YL2=YEDASEOLD(NS)
+   ZL2=ZEDASEOLD(NS)
+
+   IPG1=SYNPG(1,NS)
+   IPG2=SYNPG(2,NS)
+
+   OLDIPG1=OLDSYNPG(1,NS)
+   OLDIPG2=OLDSYNPG(2,NS)
+
+!  FIRST, IF EDASE IS NOT IN THE COMPLEX WITH THE OTHERS:
+
+   IF(GMODE==0)THEN
+
+      DO NB=1,NBONDPEP
+
+         IF(BONTYP(NB)==0)THEN
+            CYCLE
+         END IF
+
+         N1=BONDPEP(1,NB)
+         N2=BONDPEP(2,NB)
+
+!        NOT CLEAVING BONDS ON GROWING STRANDS:
+
+         JCYCLE=0
+
+         IF(IPG1>0)THEN
+
+            DO JR=1,PGLEN(IPG1)
+
+               IF(PGID(JR,IPG1)==N1.OR.PGID(JR,IPG1)==N2)THEN
+                  JCYCLE=1
+                  EXIT
+               END IF
+
+            END DO
+
+            IF(JCYCLE==1)THEN
+               CYCLE
+            END IF
+
+         END IF
+
+
+         XP3=0.5D0*(X(N1)+X(N2))
+         YP3=0.0D0
+         ZP3=0.0D0
+
+         XP1=2*X(N1)-XP3
+         YP1=2*Y(N1)
+         ZP1=2*Z(N1)
+
+         XP2=2*X(N2)-XP3
+         YP2=2*Y(N2)
+         ZP2=2*Z(N2)
+
+         CALL INTERSEC(CHECK,XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3)
+
+         IF(CHECK==1)THEN
+
+            EDHOLD(1,NS)=N1
+            EDHOLD(2,NS)=N2
+            EDHOLD(3,NS)=NB
+
+            EXIT
+
+         END IF
+
+      END DO
+
+      RETURN
+   END IF
+
+!----------------------------------
+
+!  IF ENZYMES ARE IN A COMPLEX:
+
+   ILOOP=SYNLOOP(NS)
+
+
+   DO JL=1,LOOPLEN(ILOOP)
+
+      N1=LOOP(JL,ILOOP)
+
+      IF(JL==LOOPLEN(ILOOP))THEN
+         N2=LOOP(1,ILOOP)
+      ELSE
+         N2=LOOP(JL+1,ILOOP)
+      END IF
+
+
+!     MATURATION OF PEPTIDES:
+
+      IF((DNOR(N1)==1.OR.DNOR(N2)==1).AND.GMODE>7.AND.GMODE<13)THEN
+         CYCLE
+      END IF
+
+      JCYCLE=0
+
+!     NOT CLEAVING BONDS ON GROWING STRANDS:
+
+      IF(IPG1>0)THEN
+
+         DO JR=1,PGLEN(IPG1)
+
+            IF(PGID(JR,IPG1)==N1.OR.PGID(JR,IPG1)==N2)THEN
+               JCYCLE=1
+               EXIT
+            END IF
+
+         END DO
+
+         IF(JCYCLE==1)THEN
+            CYCLE
+         END IF
+
+      END IF
+
+      IF(IPG2>0)THEN
+
+         DO JR=1,PGLEN(IPG2)
+
+            IF(PGID(JR,IPG2)==N1.OR.PGID(JR,IPG2)==N2)THEN
+               JCYCLE=1
+               EXIT
+            END IF
+
+         END DO
+
+         IF(JCYCLE==1)THEN
+            CYCLE
+         END IF
+
+      END IF
+
+
+!     IN PAIRED MODE, NOT CLEAVING BONDS ON JUST TERMINATED STRANDS:
+
+      IF(OLDIPG1>0.AND.GMODE>=12)THEN
+
+         DO JR=1,PGLEN(OLDIPG1)
+
+            IF(PGID(JR,OLDIPG1)==N1.OR.PGID(JR,OLDIPG1)==N2)THEN
+               JCYCLE=1
+               EXIT
+            END IF
+
+         END DO
+
+         IF(JCYCLE==1)THEN
+            CYCLE
+         END IF
+
+      END IF
+
+      IF(OLDIPG2>0.AND.GMODE>=12)THEN
+
+         DO JR=1,PGLEN(OLDIPG2)
+
+            IF(PGID(JR,OLDIPG2)==N1.OR.PGID(JR,OLDIPG2)==N2)THEN
+               JCYCLE=1
+               EXIT
+            END IF
+
+         END DO
+
+         IF(JCYCLE==1)THEN
+            CYCLE
+         END IF
+
+      END IF
+
+!     CHECK IF THIS IS A PEPTIDE BOND:
+
+      JGET=0
+
+      DO NB=1,NBONDPEP
+
+         IF(BONTYP(NB)==0)THEN
+            CYCLE
+         END IF
+
+         IF(BONDPEP(1,NB)==N1.AND.BONDPEP(2,NB)==N2)THEN
+            JGET=1
+            NBGET=NB
+            EXIT
+         END IF
+
+         IF(BONDPEP(1,NB)==N2.AND.BONDPEP(2,NB)==N1)THEN
+            JGET=1
+            NBGET=NB
+            EXIT
+         END IF
+
+      END DO
+
+      IF(JGET==0)THEN
+         CYCLE
+      END IF
+
+!     CHECK IF EDASE CROSSED OVER THE CROSSLINK
+
+      XP3=0.5D0*(X(N1)+X(N2))
+      YP3=0.0D0
+      ZP3=0.0D0
+
+      XP1=2*X(N1)-XP3
+      YP1=2*Y(N1)
+      ZP1=2*Z(N1)
+
+      XP2=2*X(N2)-XP3
+      YP2=2*Y(N2)
+      ZP2=2*Z(N2)
+
+      CALL INTERSEC(CHECK,XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3)
+
+      IF(CHECK==0)THEN
+         CYCLE
+      END IF
+
+      CALL RANDOM_NUMBER(R)
+
+      IF(0.1D0>R)THEN
+
+         EDHOLD(1,NS)=N1
+         EDHOLD(2,NS)=N2
+         EDHOLD(3,NS)=NBGET
+
+!print*,'Edase catching crosslink at',n1,n2
+         EXIT
+      END IF
+
+   END DO
+
+   END SUBROUTINE
+
+!====================================================================
+
+   SUBROUTINE CLEAVESIGNAL(NS,EDHOLD,X,Y,Z,SIGCLEAVE,EDLOCKIN,BONTYP,GMODE)
+
+   IMPLICIT NONE
+
+   INTEGER NS,N1,N2,NB,GMODE
+   INTEGER, ALLOCATABLE, DIMENSION(:)::EDLOCKIN,SIGCLEAVE,BONTYP
+   INTEGER, ALLOCATABLE, DIMENSION(:,:)::EDHOLD
+   DOUBLE PRECISION DX,DY,DZ,DIST
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:)::X,Y,Z
+
+   N1=EDHOLD(1,NS)
+   N2=EDHOLD(2,NS)
+   NB=EDHOLD(3,NS)
+
+   IF(EDLOCKIN(NS)==1.AND.GMODE==13)THEN
+
+      IF(BONTYP(NB)==2)THEN
+         SIGCLEAVE(NS)=1
+      END IF
+
+      RETURN
+   END IF
+
+   DX=X(N1)-X(N2)
+   DY=Y(N1)-Y(N2)
+   DZ=Z(N1)-Z(N2)
+
+   DIST=SQRT(DX*DX+DY*DY+DZ*DZ)
+
+
+   IF(DIST>1.5D0)THEN
+      EDLOCKIN(NS)=1
+   END IF
+
+   IF(GMODE<13.AND.ABS(DX)>1.5D0)THEN
+      SIGCLEAVE(NS)=1
+   END IF
+
+   END SUBROUTINE
+
+!====================================================================
+
+   SUBROUTINE POSTCLEAVE(NS,NSYN,SYNLOOP,LOOP,LOOPLEN,LOOPTYP,NLOOP,NLOOPDEL,EDHOLD,SIGCLEAVE,EDLOCKIN, &
+                         JDEACT,JFORCE,X,Y,Z,NBONDDEL,NBONDPEP,BONDPEP,BONTYP,DNOR,ATOR,EDPEP,EDCAP,GMODE)
+
+   IMPLICIT NONE
+
+   INTEGER NS,NS1,NSYN,NLOOP,NLOOPDEL,JFORCE,NBONDDEL,NBONDPEP,NB,NB0,NB1,NB2,GMODE
+   INTEGER NL1,NL2,JA1,JA2
+   INTEGER ILOOP,N1,N2,JL,NL,IPICK,J,J1,J2,JDEL,JSTART
+   INTEGER NPICK,LOLEN,CHECK,JCHECK,LEN1,LEN2,JALTER,NA1,NA2
+
+   INTEGER, ALLOCATABLE, DIMENSION(:,:):: LOOP,EDHOLD,BONDPEP,EDPEP
+   INTEGER, ALLOCATABLE, DIMENSION(:)::SYNLOOP,LOOPLEN,LOOPTYP,PART1,PART2,BONTYP,JDEACT
+   INTEGER, ALLOCATABLE, DIMENSION(:)::SIGCLEAVE,DNOR,ATOR,EDLOCKIN,EDCAP
+
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:)::X,Y,Z
+   DOUBLE PRECISION XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3
+
+   SIGCLEAVE(NS)=0
+
+   EDLOCKIN(NS)=0
+
+   EDCAP(NS)=0
+
+   N1=EDHOLD(1,NS)
+   N2=EDHOLD(2,NS)
+   NB=EDHOLD(3,NS)
+
+   IF(GMODE==0)THEN
+
+      EDHOLD(1:3,NS)=0
+
+      N1=BONDPEP(1,NB)
+      N2=BONDPEP(2,NB)
+
+      BONTYP(NB)=0
+
+      NBONDDEL=NBONDDEL+1
+
+      DNOR(N1)=-1
+      ATOR(N2)=1
+
+      NL1=0; NL2=0
+
+!     THEN MERGE TWO LOOPS:
+
+      DO NL=1,NLOOP
+
+         IF(LOOPTYP(NL)==0)THEN
+            CYCLE
+         END IF
+
+         DO JL=1,LOOPLEN(NL)
+
+            JA1=LOOP(JL,NL)
+
+            IF(JL==LOOPLEN(NL))THEN
+               JA2=LOOP(1,NL)
+            ELSE
+               JA2=LOOP(JL+1,NL)
+            END IF
+
+            IF(JA1==N1.AND.JA2==N2)THEN
+               NL1=NL
+
+               IF(JL==LOOPLEN(NL))THEN
+                  J1=1
+               ELSE
+                  J1=JL+1
+               END IF
+
+               EXIT
+            END IF
+
+            IF(JA2==N1.AND.JA1==N2)THEN
+               NL2=NL
+
+               IF(JL==LOOPLEN(NL))THEN
+                  J2=1
+               ELSE
+                  J2=JL+1
+               END IF
+
+               EXIT
+            END IF
+
+         END DO
+
+         IF(NL1>0.AND.NL2>0)THEN
+            EXIT
+         END IF
+
+      END DO
+
+      IF(NL1==0.OR.NL2==0.OR.NL1==NL2)THEN
+         RETURN
+      END IF
+
+      LOOPTYP(NL1)=0
+      LOOPTYP(NL2)=0
+      NLOOPDEL=NLOOPDEL+2
+
+      NLOOP=NLOOP+1
+
+      LOOPTYP(NLOOP)=1
+
+      LOLEN=0
+
+      DO JL=1,LOOPLEN(NL1)
+
+         J=JL+J1-1
+
+         IF(J>LOOPLEN(NL1))THEN
+            J=J-LOOPLEN(NL1)
+         END IF
+
+         LOLEN=LOLEN+1
+
+         LOOP(LOLEN,NLOOP)=LOOP(J,NL1)
+
+      END DO
+
+      DO JL=2,LOOPLEN(NL2)-1
+
+         J=JL+J2-1
+
+         IF(J>LOOPLEN(NL2))THEN
+            J=J-LOOPLEN(NL2)
+         END IF
+
+         LOLEN=LOLEN+1
+
+         LOOP(LOLEN,NLOOP)=LOOP(J,NL2)
+
+      END DO
+
+      LOOPLEN(NLOOP)=LOLEN
+
+
+      RETURN
+
+   END IF
+
+!-----------------------------------------------------
+
+   ILOOP=SYNLOOP(NS)
+
+
+   IF(N1==0.OR.N2==0.OR.NB==0)THEN
+      PRINT*,'NO HOLD FOR ENDOPEP',N1,N2,NB
+      PRINT*,'COMPLEX',NS
+      STOP
+   END IF
+
+   JSTART=0
+
+   DO JL=1,LOOPLEN(ILOOP)
+
+      NA2=LOOP(JL,ILOOP)
+
+      IF(JL==1)THEN
+         NA1=LOOP(LOOPLEN(ILOOP),ILOOP)
+      ELSE
+         NA1=LOOP(JL-1,ILOOP)
+      END IF
+
+      IF(NA1==N1.AND.NA2==N2)THEN
+         JSTART=JL
+         EXIT
+      END IF
+
+   END DO
+
+   IF(JSTART==0)THEN
+      PRINT*,'WARNING: EDHOLD DOES NOT MATCH SYNLOOP FOR SYNCOMP',NS
+      PRINT*,'EDHOLD',EDHOLD(1:3,NS)
+      PRINT*,'LOOP',LOOP(1:LOOPLEN(ILOOP),ILOOP)
+      EDHOLD(1:3,NS)=0
+      RETURN
+   END IF
+
+   IPICK=0
+
+   DO NL=1,NLOOP
+
+      IF(LOOPTYP(NL)==0)THEN
+         CYCLE
+      END IF
+
+      DO JL=1,LOOPLEN(NL)
+
+         NA1=LOOP(JL,NL)
+
+         IF(JL==LOOPLEN(NL))THEN
+            NA2=LOOP(1,NL)
+         ELSE
+            NA2=LOOP(JL+1,NL)
+         END IF
+
+         IF(NA1==N2.AND.NA2==N1)THEN
+            IPICK=NL
+            EXIT
+         END IF
+
+      END DO
+
+      IF(IPICK>0)THEN
+         EXIT
+      END IF
+
+   END DO
+
+   IF(IPICK==0)THEN
+      PRINT*,'CANNOT FIND IPICK FOR COMPLEX',NS,N1,N2
+      STOP
+   END IF
+
+!----------------------------
+
+!  IF TWO COMPLEXES MEET:
+
+   IF(ILOOP/=IPICK.AND.LOOPTYP(IPICK)==2)THEN
+
+         DO NS1=1,NSYN
+
+            IF(SYNLOOP(NS1)==IPICK.AND.NS1/=NS)THEN
+               JDEACT(NS1)=1
+               EXIT
+            END IF
+
+         END DO
+
+   END IF
+
+!-------------------------
+
+   JFORCE=1
+
+   NBONDDEL=NBONDDEL+1
+
+   BONTYP(NB)=0
+
+   NB1=BONDPEP(1,NB)
+   NB2=BONDPEP(2,NB)
+
+   DNOR(NB1)=-1
+   ATOR(NB2)=1
+
+   EDHOLD(1:3,NS)=0
+
+   IF(GMODE>1.AND.GMODE<13)THEN
+      EDPEP(1,NS)=NB1
+      EDPEP(2,NS)=NB2
+   ELSEIF(GMODE==13)THEN
+      EDPEP(1,NS)=NB2
+   END IF
+
+   IF(DNOR(NB2)==0)THEN
+
+      DO NB0=1,NBONDPEP
+
+         IF(BONTYP(NB0)/=2)THEN
+            CYCLE
+         END IF
+
+         IF(BONDPEP(1,NB0)==NB2)THEN
+            BONTYP(NB0)=1
+            EXIT
+         END IF
+
+      END DO
+
+   END IF
+
+!---------------------------------------
+!  IF THE BOND IS NOT CONNECTING TWO LOOPS:
+
+   IF(IPICK==ILOOP)THEN
+
+      PRINT*,'SYSTEM MAY BE A MESS AT SYNCOMP',NS
+      LOLEN=LOOPLEN(ILOOP)
+
+!----------------------------
+!     New method to separate two parts of the loop:
+
+      J1=0; J2=0
+
+      DO JL=1,LOLEN
+
+         JA1=LOOP(JL,ILOOP)
+
+         IF(JL==LOLEN)THEN
+            JA2=LOOP(1,ILOOP)
+         ELSE
+            JA2=LOOP(JL+1,ILOOP)
+         END IF
+
+         IF(JA1==N2.AND.JA2==N1)THEN
+
+            IF(JL==LOLEN)THEN
+               J1=1
+            ELSE
+               J1=JL+1
+            END IF
+
+         END IF
+
+         IF(JA1==N1.AND.JA2==N2)THEN
+
+            IF(JL==LOLEN)THEN
+               J2=1
+            ELSE
+               J2=JL+1
+            END IF
+
+         END IF
+
+      END DO
+
+      IF(J1==0.OR.J2==0)THEN
+         PRINT*,'COULD NOT FIND LOOP INDICES'
+         STOP
+      END IF
+
+      ALLOCATE(PART1(LOLEN),PART2(LOLEN))
+
+      LEN1=0
+
+      DO JL=1,LOLEN
+
+         J=JL+J1-1
+
+         IF(J>LOLEN)THEN
+            J=J-LOLEN
+         END IF
+
+         LEN1=LEN1+1
+
+         PART1(LEN1)=LOOP(J,ILOOP)
+
+         IF(PART1(LEN1)==N2)THEN
+            LEN1=LEN1-2
+            EXIT
+         END IF
+
+      END DO
+
+      LEN2=0
+
+      DO JL=1,LOLEN
+
+         J=JL+J2-1
+
+         IF(J>LOLEN)THEN
+            J=J-LOLEN
+         END IF
+
+         LEN2=LEN2+1
+      
+         PART2(LEN2)=LOOP(J,ILOOP)
+
+         IF(PART2(LEN2)==N1)THEN
+            LEN2=LEN2-2
+            EXIT
+         END IF
+
+      END DO
+
+!----------------------------
+!      J1=0
+
+!      J2=0
+
+!      DO JL=1,LOLEN
+
+!         IF(LOOP(JL,ILOOP)==N1.AND.J1==0)THEN
+!            J1=JL
+
+!         ELSEIF(LOOP(JL,ILOOP)==N1.AND.J1>0)THEN
+!            J2=JL
+!         END IF
+
+!      END DO
+
+!      IF(J2==0)THEN
+
+!         LOOP(J1:LOLEN-2,ILOOP)=LOOP(J1+2:LOLEN,ILOOP)
+
+!         LOOPLEN(ILOOP)=LOLEN-2
+
+!         RETURN
+
+!      END IF
+
+!      ALLOCATE(PART1(LOLEN))
+
+!      JALTER=0
+
+!      JDEL=J2-J1
+
+!      IF(JDEL<0)THEN
+!         JDEL=JDEL+LOLEN
+!      END IF
+
+!      LEN1=0
+
+!      DO JL=1,JDEL
+
+!         J=JL+J1+1
+
+!         IF(J>LOLEN)THEN
+!            J=J-LOLEN
+!         END IF
+
+!         IF(LOOP(J,ILOOP)==N2)THEN
+!            JALTER=1
+!            EXIT
+!         END IF
+
+!         LEN1=LEN1+1
+
+!         PART1(LEN1)=LOOP(J,ILOOP)
+
+!      END DO
+
+!      IF(JALTER==1)THEN
+
+!         JDEL=J1-J2
+
+!         IF(JDEL<0)THEN
+!            JDEL=JDEL+LOLEN
+!         END IF
+
+!         LEN1=0
+
+!         DO JL=1,JDEL
+
+!            J=JL+J2-1
+
+!            IF(J>LOLEN)THEN
+!               J=J-LOLEN
+!            END IF
+
+!            LEN1=LEN1+1
+
+!            PART1(LEN1)=LOOP(J,ILOOP)
+
+!         END DO
+
+!      END IF
+
+!-----
+
+!      J1=0
+
+!      J2=0
+
+!      DO JL=1,LOLEN
+
+!         IF(LOOP(JL,ILOOP)==N2.AND.J1==0)THEN
+!            J1=JL
+
+!         ELSEIF(LOOP(JL,ILOOP)==N2.AND.J1>0)THEN
+!            J2=JL
+!         END IF
+
+!      END DO
+
+!      IF(J2==0)THEN
+
+!         LOOP(J1:LOLEN-2,ILOOP)=LOOP(J1+2:LOLEN,ILOOP)
+
+!         LOOPLEN(ILOOP)=LOLEN-2
+
+!         DEALLOCATE(PART1)
+
+!         RETURN
+
+!      END IF
+
+!      ALLOCATE(PART2(LOLEN))
+
+!      JALTER=0
+
+!      JDEL=J2-J1
+
+!      IF(JDEL<0)THEN
+!         JDEL=JDEL+LOLEN
+!      END IF
+
+!      LEN2=0
+
+!      DO JL=1,JDEL
+
+!         J=JL+J1-1
+
+!         IF(J>LOLEN)THEN
+!            J=J-LOLEN
+!         END IF
+
+!         IF(LOOP(J,ILOOP)==N1)THEN
+!            JALTER=1
+!            EXIT
+!         END IF
+
+!         LEN2=LEN2+1
+
+!         PART2(LEN2)=LOOP(J,ILOOP)
+
+!      END DO
+
+!      IF(JALTER==1)THEN
+
+!         JDEL=J1-J2
+
+!         IF(JDEL<0)THEN
+!            JDEL=JDEL+LOLEN
+!         END IF
+
+!         LEN2=0
+
+!         DO JL=1,JDEL
+
+!            J=JL+J2-1
+
+!            IF(J>LOLEN)THEN
+!               J=J-LOLEN
+!            END IF
+
+!            LEN2=LEN2+1
+
+!            PART2(LEN2)=LOOP(J,ILOOP)
+
+!         END DO
+
+!      END IF
+
+!-----
+
+      IF(LEN1<4)THEN
+         LOOP(1:LEN2,ILOOP)=PART2(1:LEN2)
+         LOOPLEN(ILOOP)=LEN2
+         DEALLOCATE(PART1,PART2)
+         RETURN
+      ELSEIF(LEN2<4)THEN
+         LOOP(1:LEN1,ILOOP)=PART1(1:LEN1)
+         LOOPLEN(ILOOP)=LEN1
+         DEALLOCATE(PART1,PART2)
+         RETURN
+      ENDIF
+
+!     CHECK IF PART1 IS A LOOP:
+
+      XL1=0.5D0*(X(N1)+X(N2))
+      YL1=Y(N1)+Y(N2)
+      ZL1=Z(N1)+Z(N2)
+
+      XL2=XL1; YL2=0.0D0; ZL2=0.0D0
+
+      XP3=X(PART1(1))
+      YP3=Y(PART1(1))
+      ZP3=Z(PART1(1))
+
+      JCHECK=0
+
+      DO J=2,LEN1-1
+
+         NA1=PART1(J)
+         NA2=PART1(J+1)
+
+         IF(PART1(1)==NA1.OR.PART1(1)==NA2)THEN
+            CYCLE
+         END IF
+
+         XP1=X(NA1)
+         YP1=Y(NA1)
+         ZP1=Z(NA1)
+
+         XP2=X(NA2)
+         YP2=Y(NA2)
+         ZP2=Z(NA2)
+
+         CALL INTERSEC(CHECK,XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3)
+
+         IF(CHECK==1)THEN
+            JCHECK=JCHECK+1
+         END IF
+
+      END DO
+
+      IF(MOD(JCHECK,2)==1)THEN
+         LOOP(1:LEN1,ILOOP)=PART1(1:LEN1)
+         LOOPLEN(ILOOP)=LEN1
+      ELSE
+         LOOP(1:LEN2,ILOOP)=PART2(1:LEN2)
+         LOOPLEN(ILOOP)=LEN2
+      END IF
+
+      DEALLOCATE(PART1,PART2)
+
+      RETURN
+
+   END IF
+
+!----------------------------------------
+
+   NLOOPDEL=NLOOPDEL+2
+   LOOPTYP(ILOOP)=0
+   LOOPTYP(IPICK)=0
+
+   NLOOP=NLOOP+1
+   LOOPTYP(NLOOP)=2
+   SYNLOOP(NS)=NLOOP
+
+   DO NS1=1,NSYN
+
+      IF(SYNLOOP(NS1)==IPICK)THEN
+         SYNLOOP(NS1)=NLOOP
+         EXIT
+      END IF
+
+   END DO
+
+   LOLEN=0
+
+   DO JL=1,LOOPLEN(ILOOP)
+
+      J=JL-1+JSTART
+
+      IF(J>LOOPLEN(ILOOP))THEN
+         J=J-LOOPLEN(ILOOP)
+      END IF
+
+      LOLEN=LOLEN+1
+
+      LOOP(LOLEN,NLOOP)=LOOP(J,ILOOP)
+
+   END DO
+
+!--
+   DO JL=1,LOOPLEN(IPICK)
+
+      NA2=LOOP(JL,IPICK)
+
+      IF(JL==1)THEN
+         NA1=LOOP(LOOPLEN(IPICK),IPICK)
+      ELSE
+         NA1=LOOP(JL-1,IPICK)
+      END IF
+
+      IF(NA1==N2.AND.NA2==N1)THEN
+         JSTART=JL
+         EXIT
+      END IF
+
+   END DO
+
+   DO JL=2,LOOPLEN(IPICK)-1
+
+      J=JL-1+JSTART
+
+      IF(J>LOOPLEN(IPICK))THEN
+         J=J-LOOPLEN(IPICK)
+      END IF
+
+      LOLEN=LOLEN+1
+
+      LOOP(LOLEN,NLOOP)=LOOP(J,IPICK)
+
+   END DO
+
+   LOOPLEN(NLOOP)=LOLEN
+
+   END SUBROUTINE
+
+!====================================================================
+
+   SUBROUTINE FGLYCANS(FXGLY,FYGLY,FZGLY,FXTHETA,FYTHETA,FZTHETA, &
+                        NPG,PGID,PGLEN,PGTYP,X,Y,Z,LBOND,KBOND,THET0,KTHETA,JFORCE,DELTA,INVDELTA,BETA,PI)
+
+   IMPLICIT NONE
+
+   INTEGER NPG,JFORCE
+   INTEGER N,I,NI,NJ,NK
+
+   INTEGER,DIMENSION(:,:),ALLOCATABLE::PGID
+   INTEGER,DIMENSION(:),ALLOCATABLE:: PGLEN,PGTYP
+
+   DOUBLE PRECISION PI
+   DOUBLE PRECISION LBOND,KBOND,THET0,KTHETA
+   DOUBLE PRECISION DX,DY,DZ,DX1,DY1,DZ1,REP,DREP,DIST,INVDIST,DIST1,DISTREP
+   DOUBLE PRECISION ARG,THET,E,E0,F,DELTA,INVDELTA,BETA
+   DOUBLE PRECISION DFXNJ,DFYNJ,DFZNJ,DFXNK,DFYNK,DFZNK,FX,FY,FZ
+
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: FXGLY,FYGLY,FZGLY,FXTHETA,FYTHETA,FZTHETA
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: X,Y,Z
+
+   FXGLY=0.0D0; FYGLY=0.0D0; FZGLY=0.0D0
+
+   IF(JFORCE==1)THEN
+      FXTHETA=0.0D0; FYTHETA=0.0D0; FZTHETA=0.0D0
+   END IF
+
+!$OMP PARALLEL &
+!$OMP DEFAULT(NONE) &
+!$OMP PRIVATE(N,I,NI,NJ,NK,FX,FY,FZ) &
+!$OMP PRIVATE(DX,DY,DZ,DX1,DY1,DZ1,DREP,DIST,INVDIST,DIST1,DISTREP) &
+!$OMP PRIVATE(ARG,THET,E,E0,F,DFXNJ,DFYNJ,DFZNJ,DFXNK,DFYNK,DFZNK) &
+!$OMP SHARED(JFORCE,NPG,LBOND,KBOND,THET0,KTHETA,DELTA,INVDELTA,BETA) &
+!$OMP SHARED(FXGLY,FYGLY,FZGLY,FXTHETA,FYTHETA,FZTHETA,X,Y,Z,PGID,PGLEN,PGTYP) 
+
+!$OMP DO SCHEDULE(GUIDED,64)
+
+   DO N=1,NPG
+
+      DO I=1,PGLEN(N)
+
+         IF(I==PGLEN(N).AND.PGTYP(N)/=0)THEN
+            EXIT
+         END IF
+
+         NI=PGID(I,N)
+
+! -- CALCULATE GLYCAN BONDS:
+         IF(I<PGLEN(N))THEN
+            NJ=PGID(I+1,N)
+         ELSE
+            NJ=PGID(1,N)
+         END IF
+
+         DX=X(NI)-X(NJ)
+         DY=Y(NI)-Y(NJ)
+         DZ=Z(NI)-Z(NJ)
+
+         DIST=SQRT(DX**2+DY**2+DZ**2)
+
+         INVDIST=1.0D0/DIST
+
+         F=KBOND*(DIST-LBOND)
+
+         FX=F*DX*INVDIST
+         FY=F*DY*INVDIST
+         FZ=F*DZ*INVDIST
+
+         FXGLY(NI)=FXGLY(NI)-FX
+         FYGLY(NI)=FYGLY(NI)-FY
+         FZGLY(NI)=FZGLY(NI)-FZ
+
+         FXGLY(NJ)=FXGLY(NJ)+FX
+         FYGLY(NJ)=FYGLY(NJ)+FY
+         FZGLY(NJ)=FZGLY(NJ)+FZ
+
+! --- CALCULATE ANGLE TERMS:
+
+         IF(JFORCE==0)THEN
+            CYCLE
+         END IF
+
+         IF(I==1.AND.PGTYP(N)/=0)THEN
+            CYCLE
+         END IF
+
+         IF(I==1)THEN
+            NK=PGID(PGLEN(N),N)
+         ELSE
+            NK=PGID(I-1,N)
+         END IF
+
+         DX1=X(NI)-X(NK)
+         DY1=Y(NI)-Y(NK)
+         DZ1=Z(NI)-Z(NK)
+
+         DIST=DIST+BETA
+
+         DIST1=SQRT(DX1**2+DY1**2+DZ1**2)+BETA
+
+         ARG=(DX*DX1+DY*DY1+DZ*DZ1)/DIST/DIST1
+
+         THET=ACOS(ARG)
+
+
+         E0=0.5D0*KTHETA*(THET-THET0)**2
+
+!------ FORCE ON NJ ALONG X:
+
+         DREP=DX-DELTA
+
+         DISTREP=SQRT(DREP**2+DY**2+DZ**2)+BETA
+
+         ARG=(DREP*DX1+DY*DY1+DZ*DZ1)/DISTREP/DIST1
+
+         THET=ACOS(ARG)
+
+
+         E=0.5D0*KTHETA*(THET-THET0)**2
+
+         DFXNJ=(E0-E)*INVDELTA
+         FXTHETA(NJ)=FXTHETA(NJ)+DFXNJ
+
+!------ FORCE ON NJ ALONG Y:
+
+         DREP=DY-DELTA
+
+         DISTREP=SQRT(DX**2+DREP**2+DZ**2)+BETA
+
+         ARG=(DX*DX1+DREP*DY1+DZ*DZ1)/DISTREP/DIST1
+
+         THET=ACOS(ARG)
+
+
+         E=0.5D0*KTHETA*(THET-THET0)**2
+
+         DFYNJ=(E0-E)*INVDELTA
+         FYTHETA(NJ)=FYTHETA(NJ)+DFYNJ
+
+!------ FORCE ON NJ ALONG Z:
+
+         DREP=DZ-DELTA
+
+         DISTREP=SQRT(DX**2+DY**2+DREP**2)+BETA
+
+         ARG=(DX*DX1+DY*DY1+DREP*DZ1)/DISTREP/DIST1
+
+         THET=ACOS(ARG)
+
+         E=0.5D0*KTHETA*(THET-THET0)**2
+
+         DFZNJ=(E0-E)*INVDELTA
+         FZTHETA(NJ)=FZTHETA(NJ)+DFZNJ
+
+!------ FORCE ON NK ALONG X:
+
+         DREP=DX1-DELTA
+
+         DISTREP=SQRT(DREP**2+DY1**2+DZ1**2)+BETA
+
+         ARG=(DX*DREP+DY*DY1+DZ*DZ1)/DIST/DISTREP
+
+         THET=ACOS(ARG)
+
+         E=0.5D0*KTHETA*(THET-THET0)**2
+
+         DFXNK=(E0-E)*INVDELTA
+         FXTHETA(NK)=FXTHETA(NK)+DFXNK
+
+!------ FORCE ON NK ALONG Y:
+
+         DREP=DY1-DELTA
+
+         DISTREP=SQRT(DX1**2+DREP**2+DZ1**2)+BETA
+
+         ARG=(DX*DX1+DY*DREP+DZ*DZ1)/DIST/DISTREP
+
+         THET=ACOS(ARG)
+
+         E=0.5D0*KTHETA*(THET-THET0)**2
+
+         DFYNK=(E0-E)*INVDELTA
+         FYTHETA(NK)=FYTHETA(NK)+DFYNK
+
+!------ FORCE ON NK ALONG Z:
+
+         DREP=DZ1-DELTA
+
+         DISTREP=SQRT(DX1**2+DY1**2+DREP**2)+BETA
+
+         ARG=(DX*DX1+DY*DY1+DZ*DREP)/DIST/DISTREP
+
+         THET=ACOS(ARG)
+
+         E=0.5D0*KTHETA*(THET-THET0)**2
+
+         DFZNK=(E0-E)*INVDELTA
+         FZTHETA(NK)=FZTHETA(NK)+DFZNK
+
+!------ FORCE ON NI ALONG X:
+
+         FXTHETA(NI)=FXTHETA(NI)-DFXNJ-DFXNK
+
+!------ FORCE ON NI ALONG Y:
+
+         FYTHETA(NI)=FYTHETA(NI)-DFYNJ-DFYNK
+
+!------ FORCE ON NI ALONG Z:
+
+         FZTHETA(NI)=FZTHETA(NI)-DFZNJ-DFZNK
+
+
+      END DO
+
+   END DO
+
+!$OMP END DO NOWAIT
+!$OMP END PARALLEL
+
+   END SUBROUTINE
+!========================================================================
+                                                                           
+   SUBROUTINE FPEPBONDS(JFORCE,FX,FY,FZ,X,Y,Z,NBOND,BOND,BONTYP,NSIG,SIGBOND, &
+                        LBOND,KBOND,LSTART,LREP,LSWITCH,KSWITCH,MSWITCH)
+
+   IMPLICIT NONE
+
+   INTEGER NBOND,NSIG
+   INTEGER N,N1,N2,JFORCE,NS
+
+   INTEGER,DIMENSION(:,:),ALLOCATABLE::BOND,SIGBOND
+   INTEGER,DIMENSION(:),ALLOCATABLE::BONTYP!,SIGBOND
+
+   DOUBLE PRECISION DFX,DFY,DFZ
+   DOUBLE PRECISION KBOND,LBOND,LSTART,LREP
+   DOUBLE PRECISION DX,DY,DZ,DIST,INVDIST,F
+   DOUBLE PRECISION KSWITCH,LSWITCH,MSWITCH
+
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: FX,FY,FZ
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: X,Y,Z
+
+   IF(JFORCE==0)THEN
+      RETURN
+   END IF
+
+   FX=0.0D0; FY=0.0D0; FZ=0.0D0
+
+!---------------------------------------------------------------------------------------
+!   THIS HAS BEEN PRE-CALCULATED SO NO NEED TO DO IT AGAIN:
+! -- ASSUME THERE IS NO FORCE FOR EXTENSION < CONTOUR LENGTH / 4. USE LREP INSTEAD OF LBOND:
+!   LSTART=1.0D0
+
+!   LREP=LBOND-LSTART
+
+! -- ALSO USE ALTERNATIVE BOND CONSTANT:
+!      KREP=KBOND*LBOND/LREP
+
+!   LSWITCH=0.9D0*LREP
+
+!   ESWITCH=KBOND*LSWITCH**2*(LREP/4.0D0/(LREP-LSWITCH)+0.5D0)
+
+!   SLOPE=KBOND*(LREP/4.0D0/(1.0D0-LSWITCH/LREP)**2-LREP/4.0D0+LSWITCH)
+
+!   KSWITCH=SLOPE/2.0D0/LSWITCH
+!   MSWITCH=ESWITCH-KSWITCH*LSWITCH**2
+
+
+! BEFORE SWITCHING, POTENTIAL OF PEPTIDE: E(XBOND) = KBOND*XBOND**2*(1/2+1/4(1-XBOND/LBOND))
+! AFTER SWITCHING: E(XBOND)=KSWITCH*XBOND**2+MSWITCH
+!------------------------------------------------------------------------------------------------
+
+!  BECAUSE THERE ARE DOUBLE BONDS SO FIRST WE CALCULATE NORMAL BONDS:
+
+
+!$OMP parallel  &
+!$OMP DEFAULT(NONE) &
+!$OMP private(N,N1,N2,DX,DY,DZ,DIST,INVDIST,F) &
+!$OMP shared(BOND,BONTYP,NBOND,X,Y,Z,FX,FY,FZ,NSIG,SIGBOND) &
+!$OMP SHARED(KBOND,LREP,LSTART,KSWITCH,LSWITCH,MSWITCH)
+!!!OMP reduction (+:ENG)
+
+!$OMP DO SCHEDULE(GUIDED,64)
+
+      DO N=1,NBOND
+
+         IF(BONTYP(N)/=1)THEN
+            CYCLE
+         END IF
+
+         N1=BOND(1,N)
+         N2=BOND(2,N)
+
+!       Calculate the distance between two ends of the bond:
+
+         DX=X(N1)-X(N2)
+         DY=Y(N1)-Y(N2)
+         DZ=Z(N1)-Z(N2)
+
+         DIST=SQRT(DX**2+DY**2+DZ**2)-LSTART
+
+
+         IF(DIST<0.0D0)THEN
+            F=0.0D0
+
+         ELSEIF(DIST<=LSWITCH)THEN
+
+            F=KBOND*(LREP/4.0D0/(1.0D0-DIST/LREP)**2-LREP/4.0D0+DIST)
+
+         ELSEIF(DIST>LSWITCH)THEN
+
+            F=2.0D0*KSWITCH*DIST
+
+         END IF
+
+         DIST=DIST+LSTART
+         INVDIST=1.0D0/DIST
+
+         FX(N2)=F*DX*INVDIST
+         FY(N2)=F*DY*INVDIST
+         FZ(N2)=F*DZ*INVDIST
+
+         FX(N1)=-FX(N2)
+         FY(N1)=-FY(N2)
+         FZ(N1)=-FZ(N2)
+
+
+      END DO
+
+!$OMP END DO NOWAIT
+!$OMP end parallel 
+
+!---------------------------------
+
+      IF(NSIG==0)THEN
+         RETURN
+      END IF
+
+      DO N=1,NSIG
+
+         N1=SIGBOND(1,N)
+         N2=SIGBOND(2,N)
+
+!       Calculate the distance between two ends of the bond:
+
+         DX=X(N1)-X(N2)
+         DY=Y(N1)-Y(N2)
+         DZ=Z(N1)-Z(N2)
+
+         DIST=SQRT(DX**2+DY**2+DZ**2)-LSTART
+
+         IF(DIST<0.0D0)THEN
+            F=0.0D0
+
+         ELSEIF(DIST<=LSWITCH)THEN
+
+            F=KBOND*(LREP/4.0D0/(1.0D0-DIST/LREP)**2-LREP/4.0D0+DIST)
+
+         ELSEIF(DIST>LSWITCH)THEN
+
+            F=2.0D0*KSWITCH*DIST
+
+         END IF
+
+         DIST=DIST+LSTART
+         INVDIST=1.0D0/DIST
+
+         DFX=F*DX*INVDIST
+         DFY=F*DY*INVDIST
+         DFZ=F*DZ*INVDIST
+
+         FX(N2)=FX(N2)+DFX
+         FY(N2)=FY(N2)+DFY
+         FZ(N2)=FZ(N2)+DFZ
+
+         FX(N1)=FX(N1)-DFX
+         FY(N1)=FY(N1)-DFY
+         FZ(N1)=FZ(N1)-DFZ
+
+
+      END DO
+
+
+
+   END SUBROUTINE
+!==================================================================
+
+ SUBROUTINE FPRES(JFORCE,NATOM,FX,FY,FZ,X,Y,Z,NLOOP,LOOP,LOOPLEN,LOOPTYP,PRES,NTHREAD,DELTA,INVDELTA)
+
+      IMPLICIT NONE
+
+      INTEGER NATOM,JFORCE
+      INTEGER NLOOP
+      INTEGER I,J,N,NI,NJ,LENGTH,TID, OMP_GET_THREAD_NUM,NTHREAD
+
+      INTEGER,DIMENSION(:),ALLOCATABLE::LOOPLEN,LOOPTYP
+      INTEGER,DIMENSION(:,:),ALLOCATABLE:: LOOP
+
+      DOUBLE PRECISION PRES
+      DOUBLE PRECISION XCEN,YCEN,ZCEN
+      DOUBLE PRECISION X0,Y0,Z0,XI,YI,ZI,XJ,YJ,ZJ
+      DOUBLE PRECISION DELTA,INVDELTA,V0,V,VOLM
+      DOUBLE PRECISION VLOOP,VX,VY,VZ,XNOR,YNOR,ZNOR,DIST,INVDIST,KBOND
+
+      DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: FX,FY,FZ
+      DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: X,Y,Z
+      DOUBLE PRECISION,DIMENSION(:,:),ALLOCATABLE:: FXREP,FYREP,FZREP
+
+
+      IF(JFORCE==0)THEN
+         RETURN
+      END IF
+
+!--   PICK AN ARTIFICIAL BOND CONSTANT TO FLATTEN THE LOOPS:
+      KBOND=0.15D0    ! -- THIS VALUE IS CHOSEN SO THE FREQUENCY = 1/50 COMPARED TO K_G
+
+!       First we locate the center of the cell:
+
+      XCEN=SUM(X(1:NATOM))/NATOM
+      YCEN=SUM(Y(1:NATOM))/NATOM
+      ZCEN=SUM(Z(1:NATOM))/NATOM
+
+      ALLOCATE(FXREP(NTHREAD,NATOM),FYREP(NTHREAD,NATOM),FZREP(NTHREAD,NATOM))
+      FXREP=0.0D0; FYREP=0.0D0; FZREP=0.0D0
+
+
+
+!$OMP PARALLEL &
+!$OMP DEFAULT(NONE) &
+!$OMP PRIVATE(N,I,NI,NJ,X0,Y0,Z0,V0,V,TID) &
+!$OMP PRIVATE(XI,YI,ZI,XJ,YJ,ZJ,LENGTH) &
+!$OMP PRIVATE(VLOOP,VX,VY,VZ,XNOR,YNOR,ZNOR,DIST,INVDIST) &
+!$OMP SHARED(FXREP,FYREP,FZREP,X,Y,Z,XCEN,YCEN,ZCEN,PRES,DELTA,INVDELTA,NLOOP,LOOP,LOOPLEN) &
+!$OMP SHARED(NTHREAD,KBOND,LOOPTYP)
+
+!$OMP DO SCHEDULE(GUIDED,64)
+
+   DO N=1,NLOOP
+
+      IF(LOOPTYP(N)==0)THEN
+         CYCLE
+      END IF
+
+! --- THREAD ID:
+      TID = OMP_GET_THREAD_NUM()
+      TID=TID+1
+!tid=1
+
+      LENGTH=LOOPLEN(N)
+
+! --- FIND THE LOOP CENTER:
+
+      X0=0.0D0; Y0=0.0D0; Z0=0.0D0
+
+      DO I=1,LENGTH
+         X0=X0+X(LOOP(I,N))
+         Y0=Y0+Y(LOOP(I,N))
+         Z0=Z0+Z(LOOP(I,N))
+
+      END DO
+
+      X0=X0/LENGTH; Y0=Y0/LENGTH; Z0=Z0/LENGTH
+
+! --- THESE ARE USED TO FIND THE LOOP NORMAL VECTOR:
+      VLOOP=0.0D0; VX=0.0D0; VY=0.0D0; VZ=0.0D0
+
+! --  NOW RUN THE LOOP:
+
+      DO I=1,LENGTH
+
+
+         NI=LOOP(I,N)
+
+
+         IF(I<LENGTH)THEN
+            NJ=LOOP(I+1,N)
+         ELSE
+            NJ=LOOP(1,N)
+         END IF
+
+         XI=X(NI);YI=Y(NI);ZI=Z(NI)
+         XJ=X(NJ);YJ=Y(NJ);ZJ=Z(NJ)
+
+!       Volume of the tetrahedron formed by I, J, tetragon
+!       center and cell center:
+
+         V0=VOL(XI,YI,ZI,XJ,YJ,ZJ,X0,Y0,Z0,XCEN,YCEN,ZCEN)
+
+! -- TO CALCULATE FORCE ON NI, PLUS ADJUSTMENT DUE TO DIFFERENCE IN RADII FROM CENTER:
+
+         V=VOL(XI+DELTA,YI,ZI,XJ,YJ,ZJ,X0,Y0,Z0,XCEN,YCEN,ZCEN)
+
+         FXREP(TID,NI)=FXREP(TID,NI)+PRES*(V-V0)*INVDELTA
+
+         V=VOL(XI,YI+DELTA,ZI,XJ,YJ,ZJ,X0,Y0,Z0,XCEN,YCEN,ZCEN)
+
+         FYREP(TID,NI)=FYREP(TID,NI)+PRES*(V-V0)*INVDELTA
+
+         V=VOL(XI,YI,ZI+DELTA,XJ,YJ,ZJ,X0,Y0,Z0,XCEN,YCEN,ZCEN)
+
+         FZREP(TID,NI)=FZREP(TID,NI)+PRES*(V-V0)*INVDELTA
+
+! --  TO CALCULATE FORCE ON NJ:
+
+         V=VOL(XI,YI,ZI,XJ+DELTA,YJ,ZJ,X0,Y0,Z0,XCEN,YCEN,ZCEN)
+
+         FXREP(TID,NJ)=FXREP(TID,NJ)+PRES*(V-V0)*INVDELTA
+
+         V=VOL(XI,YI,ZI,XJ,YJ+DELTA,ZJ,X0,Y0,Z0,XCEN,YCEN,ZCEN)
+
+         FYREP(TID,NJ)=FYREP(TID,NJ)+PRES*(V-V0)*INVDELTA
+
+         V=VOL(XI,YI,ZI,XJ,YJ,ZJ+DELTA,X0,Y0,Z0,XCEN,YCEN,ZCEN)
+
+         FZREP(TID,NJ)=FZREP(TID,NJ)+PRES*(V-V0)*INVDELTA
+
+! --  TO FIND THE NORMAL VECTOR:
+         VLOOP=VLOOP+V0
+
+         VX=VX+VOL(XI,YI,ZI,XJ,YJ,ZJ,X0+DELTA,Y0,Z0,XCEN,YCEN,ZCEN)
+
+         VY=VY+VOL(XI,YI,ZI,XJ,YJ,ZJ,X0,Y0+DELTA,Z0,XCEN,YCEN,ZCEN)
+
+         VZ=VZ+VOL(XI,YI,ZI,XJ,YJ,ZJ,X0,Y0,Z0+DELTA,XCEN,YCEN,ZCEN)
+
+      END DO
+
+! --  THIS IS THE NORMAL VECTOR:
+
+      XNOR=(VX-VLOOP)*INVDELTA
+      YNOR=(VY-VLOOP)*INVDELTA
+      ZNOR=(VZ-VLOOP)*INVDELTA
+
+      DIST=SQRT(XNOR**2+YNOR**2+ZNOR**2)
+      INVDIST=1.0D0/DIST
+
+      XNOR=XNOR*INVDIST
+      YNOR=YNOR*INVDIST
+      ZNOR=ZNOR*INVDIST
+
+!---  NOW FLATTEN THE LOOP:
+
+      DO I=1,LENGTH
+
+         NI=LOOP(I,N)
+
+         DIST=XNOR*(X(NI)-X0)+YNOR*(Y(NI)-Y0)+ZNOR*(Z(NI)-Z0)
+
+         FXREP(TID,NI)=FXREP(TID,NI)-KBOND*DIST*XNOR
+
+         FYREP(TID,NI)=FYREP(TID,NI)-KBOND*DIST*YNOR
+
+         FZREP(TID,NI)=FZREP(TID,NI)-KBOND*DIST*ZNOR
+
+      END DO
+
+   END DO
+
+!$OMP END DO NOWAIT
+!$OMP END PARALLEL
+
+!$OMP PARALLEL &
+!$OMP DEFAULT(NONE) &
+!$OMP PRIVATE(N) &
+!$OMP SHARED(NATOM,FX,FY,FZ,FXREP,FYREP,FZREP,NTHREAD)
+!$OMP DO SCHEDULE(GUIDED,64)
+
+      DO N=1,NATOM
+         FX(N)=SUM(FXREP(1:NTHREAD,N))
+         FY(N)=SUM(FYREP(1:NTHREAD,N))
+         FZ(N)=SUM(FZREP(1:NTHREAD,N))
+      END DO
+
+!$OMP END DO NOWAIT
+!$OMP END PARALLEL
+
+      DEALLOCATE(FXREP,FYREP,FZREP)
+
+   END SUBROUTINE
+
+!======================================
+
+   SUBROUTINE SYNCOMP(NSYN,SYNDIR,XGTASE,YGTASE,ZGTASE,XTPASE,YTPASE,ZTPASE,XEDASE,YEDASE,ZEDASE, &
+                      KPAIR,LPAIR,KGTTP,LGTTP,KGTED,LGTED,KSIDE,LSIDE,DELTA,INVDELTA,BETA, &
+                      FXGTASE,FYGTASE,FZGTASE,FXTPASE,FYTPASE,FZTPASE,FXEDASE,FYEDASE,FZEDASE, &
+                      XLEAD,YLEAD,ZLEAD,KLEAD,GMODE)
+
+   IMPLICIT NONE
+
+   INTEGER NS,NSYN,GMODE
+   INTEGER,DIMENSION(:),ALLOCATABLE::SYNDIR
+   DOUBLE PRECISION KPAIR,LPAIR,KGTTP,LGTTP,KGTED,LGTED,KSIDE,LSIDE,DELTA,INVDELTA,BETA,KLEAD
+   DOUBLE PRECISION DX,DY,DZ,DIST,INVDIST,FX,FY,FZ,F,THET,ARG,E0,ETEMP,REP
+
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE::XEDASE,YEDASE,ZEDASE,FXEDASE,FYEDASE,FZEDASE,XLEAD,YLEAD,ZLEAD
+   DOUBLE PRECISION,DIMENSION(:,:),ALLOCATABLE::FXGTASE,FYGTASE,FZGTASE,XGTASE,YGTASE,ZGTASE
+   DOUBLE PRECISION,DIMENSION(:,:),ALLOCATABLE::XTPASE,YTPASE,ZTPASE,FXTPASE,FYTPASE,FZTPASE
+
+
+
+   DO NS=1,NSYN
+
+!---- PAIR OF TRANSGLYCOSYLASES:
+
+      IF(GMODE>=12)THEN
+
+         DX=XGTASE(1,NS)-XGTASE(2,NS)
+         DY=YGTASE(1,NS)-YGTASE(2,NS)
+         DZ=ZGTASE(1,NS)-ZGTASE(2,NS)
+
+         FX=-KPAIR*(DX-LPAIR*SYNDIR(NS))
+
+         FXGTASE(1,NS)=FXGTASE(1,NS)+FX
+
+         FXGTASE(2,NS)=FXGTASE(2,NS)-FX
+
+         DIST=SQRT(DY*DY+DZ*DZ)
+
+         INVDIST=1.0D0/(DIST+BETA)
+
+         F=-2*KPAIR*DIST
+
+         FY=F*DY*INVDIST
+         FZ=F*DZ*INVDIST
+
+         FYGTASE(1,NS)=FYGTASE(1,NS)+FY
+         FZGTASE(1,NS)=FZGTASE(1,NS)+FZ
+
+         FYGTASE(2,NS)=FYGTASE(2,NS)-FY
+         FZGTASE(2,NS)=FZGTASE(2,NS)-FZ
+
+      END IF
+
+!---- TETHER THE FIRST TPASE TO THE FIRST GTASE:
+
+      DX=XGTASE(1,NS)-XTPASE(1,NS)
+      DY=YGTASE(1,NS)-YTPASE(1,NS)
+      DZ=ZGTASE(1,NS)-ZTPASE(1,NS)
+
+      DIST=SQRT(DX*DX+DY*DY+DZ*DZ)
+
+      IF(DIST>LGTTP)THEN
+
+         F=-KGTTP*(DIST-LGTTP)
+
+         INVDIST=1.0D0/DIST
+
+         FX=F*DX*INVDIST
+         FY=F*DY*INVDIST
+         FZ=F*DZ*INVDIST
+
+         FXGTASE(1,NS)=FXGTASE(1,NS)+FX
+         FYGTASE(1,NS)=FYGTASE(1,NS)+FY
+         FZGTASE(1,NS)=FZGTASE(1,NS)+FZ
+
+         FXTPASE(1,NS)=FXTPASE(1,NS)-FX
+         FYTPASE(1,NS)=FYTPASE(1,NS)-FY
+         FZTPASE(1,NS)=FZTPASE(1,NS)-FZ
+
+      END IF
+
+!---- TETHER THE SECOND TPASE TO THE FIRST GTASE:
+
+      IF(GMODE>6)THEN
+
+         DX=XGTASE(1,NS)-XTPASE(2,NS)
+         DY=YGTASE(1,NS)-YTPASE(2,NS)
+         DZ=ZGTASE(1,NS)-ZTPASE(2,NS)
+
+         DIST=SQRT(DX*DX+DY*DY+DZ*DZ)
+
+         IF(DIST>LGTTP)THEN
+
+            F=-KGTTP*(DIST-LGTTP)
+
+            INVDIST=1.0D0/DIST
+
+            FX=F*DX*INVDIST
+            FY=F*DY*INVDIST
+            FZ=F*DZ*INVDIST
+
+            FXGTASE(1,NS)=FXGTASE(1,NS)+FX
+            FYGTASE(1,NS)=FYGTASE(1,NS)+FY
+            FZGTASE(1,NS)=FZGTASE(1,NS)+FZ
+
+            FXTPASE(2,NS)=FXTPASE(2,NS)-FX
+            FYTPASE(2,NS)=FYTPASE(2,NS)-FY
+            FZTPASE(2,NS)=FZTPASE(2,NS)-FZ
+
+         END IF
+
+      END IF
+
+!---- TETHER THE SECOND TPASE TO THE SECOND GTASE:
+
+      IF(GMODE>=12)THEN
+
+         DX=XGTASE(2,NS)-XTPASE(2,NS)
+         DY=YGTASE(2,NS)-YTPASE(2,NS)
+         DZ=ZGTASE(2,NS)-ZTPASE(2,NS)
+
+         DIST=SQRT(DX*DX+DY*DY+DZ*DZ)
+
+         IF(DIST>LGTTP)THEN
+
+            F=-KGTTP*(DIST-LGTTP)
+
+            INVDIST=1.0D0/DIST
+
+            FX=F*DX*INVDIST
+            FY=F*DY*INVDIST
+            FZ=F*DZ*INVDIST
+
+            FXGTASE(2,NS)=FXGTASE(2,NS)+FX
+            FYGTASE(2,NS)=FYGTASE(2,NS)+FY
+            FZGTASE(2,NS)=FZGTASE(2,NS)+FZ
+
+            FXTPASE(2,NS)=FXTPASE(2,NS)-FX
+            FYTPASE(2,NS)=FYTPASE(2,NS)-FY
+            FZTPASE(2,NS)=FZTPASE(2,NS)-FZ
+
+         END IF
+
+
+!---- TETHER THE THIRD TPASE TO THE SECOND GTASE:
+
+         DX=XGTASE(2,NS)-XTPASE(3,NS)
+         DY=YGTASE(2,NS)-YTPASE(3,NS)
+         DZ=ZGTASE(2,NS)-ZTPASE(3,NS)
+
+         DIST=SQRT(DX*DX+DY*DY+DZ*DZ)
+
+         IF(DIST>LGTTP)THEN
+
+            F=-KGTTP*(DIST-LGTTP)
+
+            INVDIST=1.0D0/DIST
+
+            FX=F*DX*INVDIST
+            FY=F*DY*INVDIST
+            FZ=F*DZ*INVDIST
+
+            FXGTASE(2,NS)=FXGTASE(2,NS)+FX
+            FYGTASE(2,NS)=FYGTASE(2,NS)+FY
+            FZGTASE(2,NS)=FZGTASE(2,NS)+FZ
+
+            FXTPASE(3,NS)=FXTPASE(3,NS)-FX
+            FYTPASE(3,NS)=FYTPASE(3,NS)-FY
+            FZTPASE(3,NS)=FZTPASE(3,NS)-FZ
+
+         END IF
+
+      END IF
+
+!     CONSTRAIN THE FIRST TPASE TO LEFT SIDE OF THE FIRST GTASE:
+
+      IF(GMODE>6)THEN
+
+         DX=XTPASE(1,NS)-XGTASE(1,NS)
+
+         IF(DX*SYNDIR(NS)<LSIDE)THEN
+
+            F=KSIDE*(LSIDE/(DX+DELTA*SYNDIR(NS))-DX/LSIDE)
+
+            FXTPASE(1,NS)=FXTPASE(1,NS)+F
+
+            FXGTASE(1,NS)=FXGTASE(1,NS)-F
+
+         END IF
+
+      END IF
+
+!     CONSTRAIN THE SECOND TPASE TO RIGHT SIDE OF THE FIRST GTASE:
+
+      IF(GMODE>6.AND.GMODE<12)THEN
+
+         DX=XGTASE(1,NS)-XTPASE(2,NS)
+
+         IF(DX*SYNDIR(NS)<LSIDE)THEN
+
+            F=KSIDE*(LSIDE/(DX+DELTA*SYNDIR(NS))-DX/LSIDE)
+
+            FXTPASE(2,NS)=FXTPASE(2,NS)-F
+
+            FXGTASE(1,NS)=FXGTASE(1,NS)+F
+
+         END IF
+
+      END IF
+
+      IF(GMODE>=12)THEN
+
+!        CONSTRAIN THE SECOND TPASE IN BETWEEN 2 GTASES:
+
+         DX=XTPASE(2,NS)-0.5D0*(XGTASE(1,NS)+XGTASE(2,NS))
+
+         F=-KSIDE*DX
+
+         FXTPASE(2,NS)=FXTPASE(2,NS)+F
+
+         FXGTASE(1,NS)=FXGTASE(1,NS)-0.5D0*F
+
+         FXGTASE(2,NS)=FXGTASE(2,NS)-0.5D0*F
+
+!        CONSTRAIN THE THIRD TPASE TO RIGHT SIDE OF THE SECOND GTASE:
+
+         DX=XGTASE(2,NS)-XTPASE(3,NS)
+
+         IF(DX*SYNDIR(NS)<LSIDE)THEN
+
+            F=KSIDE*(LSIDE/(DX+DELTA*SYNDIR(NS))-DX/LSIDE)
+
+            FXGTASE(2,NS)=FXGTASE(2,NS)+F
+
+            FXTPASE(3,NS)=FXTPASE(3,NS)-F
+
+         END IF
+
+
+!        CONSTRAIN EDASE ALWAYS IN FRONT OF GTASES:
+
+         DX=XEDASE(NS)-0.5D0*(XGTASE(1,NS)+XGTASE(2,NS))-XLEAD(NS)*LGTED
+         DY=YEDASE(NS)-0.5D0*(YGTASE(1,NS)+YGTASE(2,NS))-YLEAD(NS)*LGTED
+         DZ=ZEDASE(NS)-0.5D0*(ZGTASE(1,NS)+ZGTASE(2,NS))-ZLEAD(NS)*LGTED
+
+         DIST=SQRT(DX*DX+DY*DY+DZ*DZ)
+         INVDIST=1.0D0/DIST
+
+         F=-KGTED*DIST
+
+         FX=F*DX*INVDIST
+         FY=F*DY*INVDIST
+         FZ=F*DZ*INVDIST
+
+         FXEDASE(NS)=FXEDASE(NS)+FX
+         FYEDASE(NS)=FYEDASE(NS)+FY
+         FZEDASE(NS)=FZEDASE(NS)+FZ
+
+         FXGTASE(1,NS)=FXGTASE(1,NS)-0.5D0*FX
+         FYGTASE(1,NS)=FYGTASE(1,NS)-0.5D0*FY
+         FZGTASE(1,NS)=FZGTASE(1,NS)-0.5D0*FZ
+
+         FXGTASE(2,NS)=FXGTASE(2,NS)-0.5D0*FX
+         FYGTASE(2,NS)=FYGTASE(2,NS)-0.5D0*FY
+         FZGTASE(2,NS)=FZGTASE(2,NS)-0.5D0*FZ
+
+      END IF
+
+!     EDASE IS TETHERED TO GTASE:
+
+      IF(GMODE>0.AND.GMODE<12)THEN
+
+         DX=XEDASE(NS)-XGTASE(1,NS)
+         DY=YEDASE(NS)-YGTASE(1,NS)
+         DZ=ZEDASE(NS)-ZGTASE(1,NS)
+
+         DIST=SQRT(DX**2+DY**2+DZ**2)
+
+         IF(DIST>DELTA)THEN
+
+            F=-KGTED*(DIST-LGTED)
+
+            INVDIST=1.0D0/DIST
+
+            FX=F*DX*INVDIST
+            FY=F*DY*INVDIST
+            FZ=F*DZ*INVDIST
+
+            FXEDASE(NS)=FXEDASE(NS)+FX
+            FYEDASE(NS)=FYEDASE(NS)+FY
+            FZEDASE(NS)=FZEDASE(NS)+FZ
+
+            FXGTASE(1,NS)=FXGTASE(1,NS)-FX
+            FYGTASE(1,NS)=FYGTASE(1,NS)-FY
+            FZGTASE(1,NS)=FZGTASE(1,NS)-FZ
+
+         END IF
+
+      END IF
+
+!     EDASE IS FIXED AHEAD OF GTASE IN THE LEADING DIRECTION:
+
+      IF(GMODE>3.AND.GMODE<12)THEN
+
+         DX=XEDASE(NS)-XGTASE(1,NS)
+         DY=YEDASE(NS)-YGTASE(1,NS)
+         DZ=ZEDASE(NS)-ZGTASE(1,NS)
+
+         DIST=SQRT(DX**2+DY**2+DZ**2)
+
+         DIST=DIST+BETA
+
+         ARG=(DX*XLEAD(NS)+DY*YLEAD(NS)+DZ*ZLEAD(NS))/DIST
+
+         THET=ACOS(ARG)
+
+         E0=0.5D0*KLEAD*THET**2
+
+!-----
+
+         REP=DX+DELTA
+
+         DIST=SQRT(REP**2+DY**2+DZ**2)+BETA
+
+         ARG=(REP*XLEAD(NS)+DY*YLEAD(NS)+DZ*ZLEAD(NS))/DIST
+
+         THET=ACOS(ARG)
+
+         ETEMP=0.5D0*KLEAD*THET**2
+
+         FXGTASE(1,NS)=FXGTASE(1,NS)+(ETEMP-E0)*INVDELTA
+
+         FXEDASE(NS)=FXEDASE(NS)-(ETEMP-E0)*INVDELTA
+
+!-----
+
+         REP=DY+DELTA
+
+         DIST=SQRT(DX**2+REP**2+DZ**2)+BETA
+
+         ARG=(DX*XLEAD(NS)+REP*YLEAD(NS)+DZ*ZLEAD(NS))/DIST
+
+         THET=ACOS(ARG)
+
+         ETEMP=0.5D0*KLEAD*THET**2
+
+         FYGTASE(1,NS)=FYGTASE(1,NS)+(ETEMP-E0)*INVDELTA
+
+         FYEDASE(NS)=FYEDASE(NS)-(ETEMP-E0)*INVDELTA
+
+!-----
+
+         REP=DZ+DELTA
+
+         DIST=SQRT(DX**2+DY**2+REP**2)+BETA
+
+         ARG=(DX*XLEAD(NS)+DY*YLEAD(NS)+REP*ZLEAD(NS))/DIST
+
+         THET=ACOS(ARG)
+
+         ETEMP=0.5D0*KLEAD*THET**2
+
+         FZGTASE(1,NS)=FZGTASE(1,NS)+(ETEMP-E0)*INVDELTA
+
+         FZEDASE(NS)=FZEDASE(NS)-(ETEMP-E0)*INVDELTA
+
+      ENDIF
+
+   END DO
+
+
+
+
+   END SUBROUTINE
+
+!=========================================================================
+
+   SUBROUTINE GTAHOLD(NSYN,GLYTIP,GLYSEC,KGTASE,LGTASE,KLEAD,KTHETA,DELTA,INVDELTA,BETA,X,Y,Z, &
+                      XLEAD,YLEAD,ZLEAD,FXSYN,FYSYN,FZSYN,XGTASE,YGTASE,ZGTASE,FXGTASE,FYGTASE,FZGTASE)
+
+   IMPLICIT NONE
+
+   INTEGER NSYN,NS,N1,N2
+
+   INTEGER,DIMENSION(:,:),ALLOCATABLE::GLYTIP,GLYSEC
+
+   DOUBLE PRECISION KGTASE,KLEAD,KTHETA,DELTA,INVDELTA,BETA,PI
+   DOUBLE PRECISION DX,DY,DZ,F,FX,FY,FZ,DIST,INVDIST,DX1,DY1,DZ1,DREP,REP,ARG,THET,E0,ETEMP,LGLY
+
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: X,Y,Z,XLEAD,YLEAD,ZLEAD,FXSYN,FYSYN,FZSYN
+   DOUBLE PRECISION,DIMENSION(:,:),ALLOCATABLE::FXGTASE,FYGTASE,FZGTASE,XGTASE,YGTASE,ZGTASE,LGTASE
+
+
+   FXSYN=0.0D0; FYSYN=0.0D0; FZSYN=0.0D0
+
+
+   DO NS=1,NSYN
+
+!---  THE FIRST GTASE HOLDS GLYCAN TIP:
+
+      IF(GLYTIP(1,NS)/=0)THEN
+
+         N1=GLYTIP(1,NS)
+
+         DX=XGTASE(1,NS)-X(N1)
+         DY=YGTASE(1,NS)-Y(N1)
+         DZ=ZGTASE(1,NS)-Z(N1)
+
+         DIST=SQRT(DX**2+DY**2+DZ**2)
+
+         INVDIST=1.0D0/DIST
+
+         IF(LGTASE(1,NS)>1.0D0)THEN
+            F=-KGTASE*(DIST-LGTASE(1,NS))
+         ELSE
+            F=-5*KGTASE*(DIST-LGTASE(1,NS))
+         END IF
+
+         FX=F*DX*INVDIST
+         FY=F*DY*INVDIST
+         FZ=F*DZ*INVDIST
+
+         FXGTASE(1,NS)=FXGTASE(1,NS)+FX
+         FYGTASE(1,NS)=FYGTASE(1,NS)+FY
+         FZGTASE(1,NS)=FZGTASE(1,NS)+FZ
+
+         FXSYN(N1)=FXSYN(N1)-FX
+         FYSYN(N1)=FYSYN(N1)-FY
+         FZSYN(N1)=FZSYN(N1)-FZ
+
+      END IF
+
+! --  TAKING INTO ACCOUNT THE ANGLE TERM AT THE NEW PG UNIT:
+
+      IF(GLYSEC(1,NS)/=0)THEN
+
+         N2=GLYSEC(1,NS)
+
+         DIST=DIST+BETA
+
+         DX1=X(N1)-X(N2)
+         DY1=Y(N1)-Y(N2)
+         DZ1=Z(N1)-Z(N2)
+
+         LGLY=SQRT(DX1**2+DY1**2+DZ1**2)+BETA
+
+         ARG=(DX*DX1+DY*DY1+DZ*DZ1)/DIST/LGLY
+
+         THET=ACOS(ARG)
+
+         E0=0.5D0*KTHETA*THET**2
+
+!-------
+
+         REP=DX+DELTA
+         DREP=SQRT(REP**2+DY**2+DZ**2)+BETA
+
+         ARG=(REP*DX1+DY*DY1+DZ*DZ1)/DREP/LGLY
+
+         THET=ACOS(ARG)
+
+         ETEMP=0.5D0*KTHETA*THET**2
+
+         F=-(ETEMP-E0)*INVDELTA
+
+         FXGTASE(1,NS)=FXGTASE(1,NS)+F
+
+         FXSYN(N1)=FXSYN(N1)-F
+
+!--------
+
+         REP=DY+DELTA
+         DREP=SQRT(DX**2+REP**2+DZ**2)+BETA
+
+         ARG=(DX*DX1+REP*DY1+DZ*DZ1)/DREP/LGLY
+
+         THET=ACOS(ARG)
+
+         ETEMP=0.5D0*KTHETA*THET**2
+
+         F=-(ETEMP-E0)*INVDELTA
+
+         FYGTASE(1,NS)=FYGTASE(1,NS)+F
+
+         FYSYN(N1)=FYSYN(N1)-F
+
+!-------
+
+         REP=DZ+DELTA
+         DREP=SQRT(DX**2+DY**2+REP**2)+BETA
+
+         ARG=(DX*DX1+DY*DY1+REP*DZ1)/DREP/LGLY
+
+         THET=ACOS(ARG)
+
+         ETEMP=0.5D0*KTHETA*THET**2
+
+         F=-(ETEMP-E0)*INVDELTA
+
+         FZGTASE(1,NS)=FZGTASE(1,NS)+F
+
+         FZSYN(N1)=FZSYN(N1)-F
+
+!-------
+
+         REP=DX1-DELTA
+         DREP=SQRT(REP**2+DY1**2+DZ1**2)+BETA
+
+         ARG=(DX*REP+DY*DY1+DZ*DZ1)/DIST/DREP
+
+         THET=ACOS(ARG)
+
+         ETEMP=0.5D0*KTHETA*THET**2
+
+         F=-(ETEMP-E0)*INVDELTA
+
+         FXSYN(N2)=FXSYN(N2)+F
+
+         FXSYN(N1)=FXSYN(N1)-F
+
+!--------
+
+         REP=DY1-DELTA
+         DREP=SQRT(DX1**2+REP**2+DZ1**2)+BETA
+
+         ARG=(DX*DX1+DY*REP+DZ*DZ1)/DIST/DREP
+
+         THET=ACOS(ARG)
+
+         ETEMP=0.5D0*KTHETA*THET**2
+
+         F=-(ETEMP-E0)*INVDELTA
+
+         FYSYN(N2)=FYSYN(N2)+F
+
+         FYSYN(N1)=FYSYN(N1)-F
+
+!--------
+
+         REP=DZ1-DELTA
+         DREP=SQRT(DX1**2+DY1**2+REP**2)+BETA
+
+         ARG=(DX*DX1+DY*DY1+DZ*REP)/DIST/DREP
+
+         THET=ACOS(ARG)
+
+         ETEMP=0.5D0*KTHETA*THET**2
+
+         F=-(ETEMP-E0)*INVDELTA
+
+         FZSYN(N2)=FZSYN(N2)+F
+
+         FZSYN(N1)=FZSYN(N1)-F
+
+      END IF
+
+!---- CONSTRAIN STRAND TO LEADING DIRECTION AT THE TIP:
+
+      IF(GLYTIP(1,NS)/=0)THEN
+
+         DIST=SQRT(DX**2+DY**2+DZ**2)+BETA
+
+         ARG=(DX*XLEAD(NS)+DY*YLEAD(NS)+DZ*ZLEAD(NS))/DIST
+
+         THET=ACOS(ARG)
+
+         E0=0.5D0*KLEAD*THET**2
+
+!--------
+         REP=DX+DELTA
+
+         DIST=SQRT(REP**2+DY**2+DZ**2)+BETA
+
+         ARG=(REP*XLEAD(NS)+DY*YLEAD(NS)+DZ*ZLEAD(NS))/DIST
+
+         THET=ACOS(ARG)
+
+         ETEMP=0.5D0*KLEAD*THET**2
+
+         F=-(ETEMP-E0)*INVDELTA
+
+         FXGTASE(1,NS)=FXGTASE(1,NS)+F
+
+         FXSYN(N1)=FXSYN(N1)-F
+
+!--------
+
+         REP=DY+DELTA
+
+         DIST=SQRT(DX**2+REP**2+DZ**2)+BETA
+
+         ARG=(DX*XLEAD(NS)+REP*YLEAD(NS)+DZ*ZLEAD(NS))/DIST
+
+         THET=ACOS(ARG)
+
+         ETEMP=0.5D0*KLEAD*THET**2
+
+         F=-(ETEMP-E0)*INVDELTA
+
+         FYGTASE(1,NS)=FYGTASE(1,NS)+F
+
+         FYSYN(N1)=FYSYN(N1)-F
+
+!--------
+
+         REP=DZ+DELTA
+
+         DIST=SQRT(DX**2+DY**2+REP**2)+BETA
+
+         ARG=(DX*XLEAD(NS)+DY*YLEAD(NS)+REP*ZLEAD(NS))/DIST
+
+         THET=ACOS(ARG)
+
+         ETEMP=0.5D0*KLEAD*THET**2
+
+         F=-(ETEMP-E0)*INVDELTA
+
+         FZGTASE(1,NS)=FZGTASE(1,NS)+F
+
+         FZSYN(N1)=FZSYN(N1)-F
+
+      END IF
+
+!---- THE SECOND GTASE HOLDING THE SECOND STRAND TIP:
+
+      IF(GLYTIP(2,NS)/=0)THEN
+
+         N1=GLYTIP(2,NS)
+
+         DX=XGTASE(2,NS)-X(N1)
+         DY=YGTASE(2,NS)-Y(N1)
+         DZ=ZGTASE(2,NS)-Z(N1)
+
+         DIST=SQRT(DX**2+DY**2+DZ**2)
+
+         INVDIST=1.0D0/DIST
+
+         IF(LGTASE(2,NS)>1.0D0)THEN
+            F=-KGTASE*(DIST-LGTASE(2,NS))
+         ELSE
+            F=-5*KGTASE*(DIST-LGTASE(2,NS))
+         END IF
+
+         FX=F*DX*INVDIST
+         FY=F*DY*INVDIST
+         FZ=F*DZ*INVDIST
+
+         FXGTASE(2,NS)=FXGTASE(2,NS)+FX
+         FYGTASE(2,NS)=FYGTASE(2,NS)+FY
+         FZGTASE(2,NS)=FZGTASE(2,NS)+FZ
+
+         FXSYN(N1)=FXSYN(N1)-FX
+         FYSYN(N1)=FYSYN(N1)-FY
+         FZSYN(N1)=FZSYN(N1)-FZ
+
+      END IF
+
+! --  TAKING INTO ACCOUNT THE ANGLE TERM AT THE NEW PG UNIT:
+
+      IF(GLYSEC(2,NS)/=0)THEN
+
+         N2=GLYSEC(2,NS)
+
+         DIST=DIST+BETA
+
+         DX1=X(N1)-X(N2)
+         DY1=Y(N1)-Y(N2)
+         DZ1=Z(N1)-Z(N2)
+
+         LGLY=SQRT(DX1**2+DY1**2+DZ1**2)+BETA
+
+         ARG=(DX*DX1+DY*DY1+DZ*DZ1)/DIST/LGLY
+
+         THET=ACOS(ARG)
+
+         E0=0.5D0*KTHETA*THET**2
+
+!-------
+
+         REP=DX+DELTA
+         DREP=SQRT(REP**2+DY**2+DZ**2)+BETA
+
+         ARG=(REP*DX1+DY*DY1+DZ*DZ1)/DREP/LGLY
+
+         THET=ACOS(ARG)
+
+         ETEMP=0.5D0*KTHETA*THET**2
+
+         F=-(ETEMP-E0)*INVDELTA
+
+         FXGTASE(2,NS)=FXGTASE(2,NS)+F
+
+         FXSYN(N1)=FXSYN(N1)-F
+
+!--------
+
+         REP=DY+DELTA
+         DREP=SQRT(DX**2+REP**2+DZ**2)+BETA
+
+         ARG=(DX*DX1+REP*DY1+DZ*DZ1)/DREP/LGLY
+
+         THET=ACOS(ARG)
+
+         ETEMP=0.5D0*KTHETA*THET**2
+
+         F=-(ETEMP-E0)*INVDELTA
+
+         FYGTASE(2,NS)=FYGTASE(2,NS)+F
+
+         FYSYN(N1)=FYSYN(N1)-F
+
+!-------
+
+         REP=DZ+DELTA
+         DREP=SQRT(DX**2+DY**2+REP**2)+BETA
+
+         ARG=(DX*DX1+DY*DY1+REP*DZ1)/DREP/LGLY
+
+         THET=ACOS(ARG)
+
+         ETEMP=0.5D0*KTHETA*THET**2
+
+         F=-(ETEMP-E0)*INVDELTA
+
+         FZGTASE(2,NS)=FZGTASE(2,NS)+F
+
+         FZSYN(N1)=FZSYN(N1)-F
+
+!-------
+
+         REP=DX1-DELTA
+         DREP=SQRT(REP**2+DY1**2+DZ1**2)+BETA
+
+         ARG=(DX*REP+DY*DY1+DZ*DZ1)/DIST/DREP
+
+         THET=ACOS(ARG)
+
+         ETEMP=0.5D0*KTHETA*THET**2
+
+         F=-(ETEMP-E0)*INVDELTA
+
+         FXSYN(N2)=FXSYN(N2)+F
+
+         FXSYN(N1)=FXSYN(N1)-F
+
+!--------
+
+         REP=DY1-DELTA
+         DREP=SQRT(DX1**2+REP**2+DZ1**2)+BETA
+
+         ARG=(DX*DX1+DY*REP+DZ*DZ1)/DIST/DREP
+
+         THET=ACOS(ARG)
+
+         ETEMP=0.5D0*KTHETA*THET**2
+
+         F=-(ETEMP-E0)*INVDELTA
+
+         FYSYN(N2)=FYSYN(N2)+F
+
+         FYSYN(N1)=FYSYN(N1)-F
+
+!--------
+
+         REP=DZ1-DELTA
+         DREP=SQRT(DX1**2+DY1**2+REP**2)+BETA
+
+         ARG=(DX*DX1+DY*DY1+DZ*REP)/DIST/DREP
+
+         THET=ACOS(ARG)
+
+         ETEMP=0.5D0*KTHETA*THET**2
+
+         F=-(ETEMP-E0)*INVDELTA
+
+         FZSYN(N2)=FZSYN(N2)+F
+
+         FZSYN(N1)=FZSYN(N1)-F
+
+      END IF
+
+!---- CONSTRAIN STRAND TO LEADING DIRECTION AT THE TIP:
+
+      IF(GLYTIP(2,NS)/=0)THEN
+
+         DIST=SQRT(DX**2+DY**2+DZ**2)+BETA
+
+         ARG=(DX*XLEAD(NS)+DY*YLEAD(NS)+DZ*ZLEAD(NS))/DIST
+
+         THET=ACOS(ARG)
+
+         E0=0.5D0*KLEAD*THET**2
+
+!--------
+         REP=DX+DELTA
+
+         DIST=SQRT(REP**2+DY**2+DZ**2)+BETA
+
+         ARG=(REP*XLEAD(NS)+DY*YLEAD(NS)+DZ*ZLEAD(NS))/DIST
+
+         THET=ACOS(ARG)
+
+         ETEMP=0.5D0*KLEAD*THET**2
+
+         F=-(ETEMP-E0)*INVDELTA
+
+         FXGTASE(2,NS)=FXGTASE(2,NS)+F
+
+         FXSYN(N1)=FXSYN(N1)-F
+
+!--------
+
+         REP=DY+DELTA
+
+         DIST=SQRT(DX**2+REP**2+DZ**2)+BETA
+
+         ARG=(DX*XLEAD(NS)+REP*YLEAD(NS)+DZ*ZLEAD(NS))/DIST
+
+         THET=ACOS(ARG)
+
+         ETEMP=0.5D0*KLEAD*THET**2
+
+         F=-(ETEMP-E0)*INVDELTA
+
+         FYGTASE(2,NS)=FYGTASE(2,NS)+F
+
+         FYSYN(N1)=FYSYN(N1)-F
+
+!--------
+
+         REP=DZ+DELTA
+
+         DIST=SQRT(DX**2+DY**2+REP**2)+BETA
+
+         ARG=(DX*XLEAD(NS)+DY*YLEAD(NS)+REP*ZLEAD(NS))/DIST
+
+         THET=ACOS(ARG)
+
+         ETEMP=0.5D0*KLEAD*THET**2
+
+         F=-(ETEMP-E0)*INVDELTA
+
+         FZGTASE(2,NS)=FZGTASE(2,NS)+F
+
+         FZSYN(N1)=FZSYN(N1)-F
+
+      END IF
+
+   END DO
+
+
+   END SUBROUTINE
+
+!===============================================================
+
+   SUBROUTINE TPAHOLD(NSYN,X,Y,Z,FXSYN,FYSYN,FZSYN,TPPEP,XTPASE,YTPASE,ZTPASE,FXTPASE,FYTPASE,FZTPASE,KTPASE,LTPASE)
+
+   IMPLICIT NONE
+
+   INTEGER NSYN,NS,N1,N2
+
+   INTEGER,DIMENSION(:,:,:),ALLOCATABLE::TPPEP
+
+   DOUBLE PRECISION KTPASE,LTPASE,DX,DY,DZ,DIST,INVDIST,FX,FY,FZ,F
+
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: X,Y,Z,FXSYN,FYSYN,FZSYN
+   DOUBLE PRECISION,DIMENSION(:,:),ALLOCATABLE::XTPASE,YTPASE,ZTPASE,FXTPASE,FYTPASE,FZTPASE
+
+
+
+
+   DO NS=1,NSYN
+
+!---- THE FIRST TPASE HOLDING A DONOR PEPTIDE:
+
+      IF(TPPEP(1,1,NS)>0)THEN
+
+         N1=TPPEP(1,1,NS)
+
+         DX=XTPASE(1,NS)-X(N1)
+         DY=YTPASE(1,NS)-Y(N1)
+         DZ=ZTPASE(1,NS)-Z(N1)
+
+         DIST=SQRT(DX**2+DY**2+DZ**2)
+
+         IF(TPPEP(2,1,NS)==0)THEN
+            F=-KTPASE*(DIST-LTPASE)
+         ELSE
+            F=-KTPASE*DIST
+         END IF
+
+         IF((DIST>LTPASE.AND.TPPEP(2,1,NS)==0).OR.TPPEP(2,1,NS)>0)THEN
+
+            INVDIST=1.0D0/DIST
+
+            FX=F*DX*INVDIST
+            FY=F*DY*INVDIST
+            FZ=F*DZ*INVDIST
+
+            FXTPASE(1,NS)=FXTPASE(1,NS)+FX
+            FYTPASE(1,NS)=FYTPASE(1,NS)+FY
+            FZTPASE(1,NS)=FZTPASE(1,NS)+FZ
+
+            FXSYN(N1)=FXSYN(N1)-FX
+            FYSYN(N1)=FYSYN(N1)-FY
+            FZSYN(N1)=FZSYN(N1)-FZ
+         END IF
+
+      END IF
+
+!---- THE FIRST TPASE HOLDING AN ACCEPTOR PEPTIDE:
+
+      IF(TPPEP(2,1,NS)>0)THEN
+
+         N1=TPPEP(2,1,NS)
+
+         DX=XTPASE(1,NS)-X(N1)
+         DY=YTPASE(1,NS)-Y(N1)
+         DZ=ZTPASE(1,NS)-Z(N1)
+
+         DIST=SQRT(DX**2+DY**2+DZ**2)
+
+         F=-KTPASE*DIST
+
+         INVDIST=1.0D0/DIST
+
+         FX=F*DX*INVDIST
+         FY=F*DY*INVDIST
+         FZ=F*DZ*INVDIST
+
+         FXTPASE(1,NS)=FXTPASE(1,NS)+FX
+         FYTPASE(1,NS)=FYTPASE(1,NS)+FY
+         FZTPASE(1,NS)=FZTPASE(1,NS)+FZ
+
+         FXSYN(N1)=FXSYN(N1)-FX
+         FYSYN(N1)=FYSYN(N1)-FY
+         FZSYN(N1)=FZSYN(N1)-FZ
+
+      END IF
+
+!     STRAIGHTEN UP THE POTENTIAL NEW PEPTIDE BOND:
+
+      IF(TPPEP(1,1,NS)>0.AND.TPPEP(2,1,NS)>0)THEN
+
+         N1=TPPEP(1,1,NS)
+
+         N2=TPPEP(2,1,NS)
+
+         DX=0.5D0*(X(N1)+X(N2))-XTPASE(1,NS)
+         DY=0.5D0*(Y(N1)+Y(N2))-YTPASE(1,NS)
+         DZ=0.5D0*(Z(N1)+Z(N2))-ZTPASE(1,NS)
+
+         DIST=SQRT(DX**2+DY**2+DZ**2)
+
+         F=-KTPASE*DIST
+
+         INVDIST=1.0D0/DIST
+
+         FX=F*DX*INVDIST
+         FY=F*DY*INVDIST
+         FZ=F*DZ*INVDIST
+
+         FXSYN(N1)=FXSYN(N1)+0.5D0*FX
+         FYSYN(N1)=FYSYN(N1)+0.5D0*FY
+         FZSYN(N1)=FZSYN(N1)+0.5D0*FZ
+
+         FXSYN(N2)=FXSYN(N2)+0.5D0*FX
+         FYSYN(N2)=FYSYN(N2)+0.5D0*FY
+         FZSYN(N2)=FZSYN(N2)+0.5D0*FZ
+
+         FXTPASE(1,NS)=FXTPASE(1,NS)-FX
+         FYTPASE(1,NS)=FYTPASE(1,NS)-FY
+         FZTPASE(1,NS)=FZTPASE(1,NS)-FZ
+
+      END IF
+
+!---- THE SECOND TPASE HOLDING A DONOR PEPTIDE:
+
+      IF(TPPEP(1,2,NS)>0)THEN
+
+         N1=TPPEP(1,2,NS)
+
+         DX=XTPASE(2,NS)-X(N1)
+         DY=YTPASE(2,NS)-Y(N1)
+         DZ=ZTPASE(2,NS)-Z(N1)
+
+         DIST=SQRT(DX**2+DY**2+DZ**2)
+
+         IF(TPPEP(2,1,NS)==0)THEN
+            F=-KTPASE*(DIST-LTPASE)
+         ELSE
+            F=-KTPASE*DIST
+         END IF
+
+         IF((DIST>LTPASE.AND.TPPEP(2,2,NS)==0).OR.TPPEP(2,2,NS)>0)THEN
+
+            INVDIST=1.0D0/DIST
+
+            FX=F*DX*INVDIST
+            FY=F*DY*INVDIST
+            FZ=F*DZ*INVDIST
+
+            FXTPASE(2,NS)=FXTPASE(2,NS)+FX
+            FYTPASE(2,NS)=FYTPASE(2,NS)+FY
+            FZTPASE(2,NS)=FZTPASE(2,NS)+FZ
+
+            FXSYN(N1)=FXSYN(N1)-FX
+            FYSYN(N1)=FYSYN(N1)-FY
+            FZSYN(N1)=FZSYN(N1)-FZ
+         END IF
+
+      END IF
+
+!---- THE SECOND TPASE HOLDING AN ACCEPTOR PEPTIDE:
+
+      IF(TPPEP(2,2,NS)>0)THEN
+
+         N1=TPPEP(2,2,NS)
+
+         DX=XTPASE(2,NS)-X(N1)
+         DY=YTPASE(2,NS)-Y(N1)
+         DZ=ZTPASE(2,NS)-Z(N1)
+
+         DIST=SQRT(DX**2+DY**2+DZ**2)
+
+         F=-KTPASE*DIST
+
+         INVDIST=1.0D0/DIST
+
+         FX=F*DX*INVDIST
+         FY=F*DY*INVDIST
+         FZ=F*DZ*INVDIST
+
+         FXTPASE(2,NS)=FXTPASE(2,NS)+FX
+         FYTPASE(2,NS)=FYTPASE(2,NS)+FY
+         FZTPASE(2,NS)=FZTPASE(2,NS)+FZ
+
+         FXSYN(N1)=FXSYN(N1)-FX
+         FYSYN(N1)=FYSYN(N1)-FY
+         FZSYN(N1)=FZSYN(N1)-FZ
+
+      END IF
+
+!     STRAIGHTEN UP THE POTENTIAL NEW PEPTIDE BOND:
+
+      IF(TPPEP(1,2,NS)>0.AND.TPPEP(2,2,NS)>0)THEN
+
+         N1=TPPEP(1,2,NS)
+
+         N2=TPPEP(2,2,NS)
+
+         DX=0.5D0*(X(N1)+X(N2))-XTPASE(2,NS)
+         DY=0.5D0*(Y(N1)+Y(N2))-YTPASE(2,NS)
+         DZ=0.5D0*(Z(N1)+Z(N2))-ZTPASE(2,NS)
+
+         DIST=SQRT(DX**2+DY**2+DZ**2)
+
+         F=-KTPASE*DIST
+
+         INVDIST=1.0D0/DIST
+
+         FX=F*DX*INVDIST
+         FY=F*DY*INVDIST
+         FZ=F*DZ*INVDIST
+
+         FXSYN(N1)=FXSYN(N1)+0.5D0*FX
+         FYSYN(N1)=FYSYN(N1)+0.5D0*FY
+         FZSYN(N1)=FZSYN(N1)+0.5D0*FZ
+
+         FXSYN(N2)=FXSYN(N2)+0.5D0*FX
+         FYSYN(N2)=FYSYN(N2)+0.5D0*FY
+         FZSYN(N2)=FZSYN(N2)+0.5D0*FZ
+
+         FXTPASE(2,NS)=FXTPASE(2,NS)-FX
+         FYTPASE(2,NS)=FYTPASE(2,NS)-FY
+         FZTPASE(2,NS)=FZTPASE(2,NS)-FZ
+
+      END IF
+
+!---- THE THIRD TPASE HOLDING A DONOR PEPTIDE:
+
+      IF(TPPEP(1,3,NS)>0)THEN
+
+         N1=TPPEP(1,3,NS)
+
+         DX=XTPASE(3,NS)-X(N1)
+         DY=YTPASE(3,NS)-Y(N1)
+         DZ=ZTPASE(3,NS)-Z(N1)
+
+         DIST=SQRT(DX**2+DY**2+DZ**2)
+
+         IF(TPPEP(2,3,NS)==0)THEN
+            F=-KTPASE*(DIST-LTPASE)
+         ELSE
+            F=-KTPASE*DIST
+         END IF
+
+         IF((DIST>LTPASE.AND.TPPEP(2,3,NS)==0).OR.TPPEP(2,3,NS)>0)THEN
+
+            INVDIST=1.0D0/DIST
+
+            FX=F*DX*INVDIST
+            FY=F*DY*INVDIST
+            FZ=F*DZ*INVDIST
+
+            FXTPASE(3,NS)=FXTPASE(3,NS)+FX
+            FYTPASE(3,NS)=FYTPASE(3,NS)+FY
+            FZTPASE(3,NS)=FZTPASE(3,NS)+FZ
+
+            FXSYN(N1)=FXSYN(N1)-FX
+            FYSYN(N1)=FYSYN(N1)-FY
+            FZSYN(N1)=FZSYN(N1)-FZ
+         END IF
+
+      END IF
+
+!---- THE THIRD TPASE HOLDING AN ACCEPTOR PEPTIDE:
+
+      IF(TPPEP(2,3,NS)>0)THEN
+
+         N1=TPPEP(2,3,NS)
+
+         DX=XTPASE(3,NS)-X(N1)
+         DY=YTPASE(3,NS)-Y(N1)
+         DZ=ZTPASE(3,NS)-Z(N1)
+
+         DIST=SQRT(DX**2+DY**2+DZ**2)
+
+         F=-KTPASE*DIST
+
+         INVDIST=1.0D0/DIST
+
+         FX=F*DX*INVDIST
+         FY=F*DY*INVDIST
+         FZ=F*DZ*INVDIST
+
+         FXTPASE(3,NS)=FXTPASE(3,NS)+FX
+         FYTPASE(3,NS)=FYTPASE(3,NS)+FY
+         FZTPASE(3,NS)=FZTPASE(3,NS)+FZ
+
+         FXSYN(N1)=FXSYN(N1)-FX
+         FYSYN(N1)=FYSYN(N1)-FY
+         FZSYN(N1)=FZSYN(N1)-FZ
+
+      END IF
+
+!     STRAIGHTEN UP THE POTENTIAL NEW PEPTIDE BOND:
+
+      IF(TPPEP(1,3,NS)>0.AND.TPPEP(2,3,NS)>0)THEN
+
+         N1=TPPEP(1,3,NS)
+
+         N2=TPPEP(2,3,NS)
+
+         DX=0.5D0*(X(N1)+X(N2))-XTPASE(3,NS)
+         DY=0.5D0*(Y(N1)+Y(N2))-YTPASE(3,NS)
+         DZ=0.5D0*(Z(N1)+Z(N2))-ZTPASE(3,NS)
+
+         DIST=SQRT(DX**2+DY**2+DZ**2)
+
+         F=-KTPASE*DIST
+
+         INVDIST=1.0D0/DIST
+
+         FX=F*DX*INVDIST
+         FY=F*DY*INVDIST
+         FZ=F*DZ*INVDIST
+
+         FXSYN(N1)=FXSYN(N1)+0.5D0*FX
+         FYSYN(N1)=FYSYN(N1)+0.5D0*FY
+         FZSYN(N1)=FZSYN(N1)+0.5D0*FZ
+
+         FXSYN(N2)=FXSYN(N2)+0.5D0*FX
+         FYSYN(N2)=FYSYN(N2)+0.5D0*FY
+         FZSYN(N2)=FZSYN(N2)+0.5D0*FZ
+
+         FXTPASE(3,NS)=FXTPASE(3,NS)-FX
+         FYTPASE(3,NS)=FYTPASE(3,NS)-FY
+         FZTPASE(3,NS)=FZTPASE(3,NS)-FZ
+
+      END IF
+
+   END DO
+
+
+   END SUBROUTINE
+
+!==========================================================
+
+   SUBROUTINE EDAHOLD(NSYN,EDHOLD,EDPEP,KEDASE,LEDASE,X,Y,Z,FXSYN,FYSYN,FZSYN, &
+                      XEDASE,YEDASE,ZEDASE,FXEDASE,FYEDASE,FZEDASE,PEPDIR,GMODE)
+
+   IMPLICIT NONE
+
+   INTEGER NSYN,NS,N1,N2,GMODE
+   INTEGER,DIMENSION(:),ALLOCATABLE::PEPDIR
+   INTEGER,DIMENSION(:,:),ALLOCATABLE::EDHOLD,EDPEP
+
+   DOUBLE PRECISION KEDASE,LEDASE,FX,FY,FZ,F,DX,DY,DZ,DIST,INVDIST
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: X,Y,Z,FXSYN,FYSYN,FZSYN
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: FXEDASE,FYEDASE,FZEDASE,XEDASE,YEDASE,ZEDASE
+
+
+   DO NS=1,NSYN
+
+!---- ENDOPEPTIDASE HOLDING A BOND TO CLEAVE:
+
+      IF(EDHOLD(1,NS)>0)THEN
+
+         N1=EDHOLD(1,NS)
+         N2=EDHOLD(2,NS)
+
+!        FORCE HOLDING EDASE CLOSE TO THE CROSSLINK CENTER:
+
+         DX=0.5D0*(X(N1)+X(N2))-XEDASE(NS)
+         DY=0.5D0*(Y(N1)+Y(N2))-YEDASE(NS)
+         DZ=0.5D0*(Z(N1)+Z(N2))-ZEDASE(NS)
+
+         DIST=SQRT(DX**2+DY**2+DZ**2)
+
+         INVDIST=1.0D0/DIST
+
+         F=-KEDASE*DIST
+
+
+         FX=F*DX*INVDIST
+         FY=F*DY*INVDIST
+         FZ=F*DZ*INVDIST
+
+         FXSYN(N1)=FXSYN(N1)+0.5D0*FX
+         FYSYN(N1)=FYSYN(N1)+0.5D0*FY
+         FZSYN(N1)=FZSYN(N1)+0.5D0*FZ
+
+         FXSYN(N2)=FXSYN(N2)+0.5D0*FX
+         FYSYN(N2)=FYSYN(N2)+0.5D0*FY
+         FZSYN(N2)=FZSYN(N2)+0.5D0*FZ
+
+         FXEDASE(NS)=FXEDASE(NS)-FX
+         FYEDASE(NS)=FYEDASE(NS)-FY
+         FZEDASE(NS)=FZEDASE(NS)-FZ
+
+!        FORCE STRETCHING THE CROSSLINK ON N1:
+
+         DX=X(N1)-XEDASE(NS)+PEPDIR(N1)*LEDASE
+         DY=Y(N1)-YEDASE(NS)
+         DZ=Z(N1)-ZEDASE(NS)
+
+         DIST=SQRT(DX**2+DY**2+DZ**2)
+         INVDIST=1.0D0/DIST
+
+         F=-KEDASE*DIST
+
+         FX=F*DX*INVDIST
+         FY=F*DY*INVDIST
+         FZ=F*DZ*INVDIST
+
+         FXSYN(N1)=FXSYN(N1)+FX
+         FYSYN(N1)=FYSYN(N1)+FY
+         FZSYN(N1)=FZSYN(N1)+FZ
+
+         FXEDASE(NS)=FXEDASE(NS)-FX
+         FYEDASE(NS)=FYEDASE(NS)-FY
+         FZEDASE(NS)=FZEDASE(NS)-FZ
+
+!        FORCE STRETCHING THE CROSSLINK ON N2:
+
+         DX=X(N2)-XEDASE(NS)+PEPDIR(N2)*LEDASE
+         DY=Y(N2)-YEDASE(NS)
+         DZ=Z(N2)-ZEDASE(NS)
+
+         DIST=SQRT(DX**2+DY**2+DZ**2)
+         INVDIST=1.0D0/DIST
+
+         F=-KEDASE*DIST
+
+         FX=F*DX*INVDIST
+         FY=F*DY*INVDIST
+         FZ=F*DZ*INVDIST
+
+         FXSYN(N2)=FXSYN(N2)+FX
+         FYSYN(N2)=FYSYN(N2)+FY
+         FZSYN(N2)=FZSYN(N2)+FZ
+
+         FXEDASE(NS)=FXEDASE(NS)-FX
+         FYEDASE(NS)=FYEDASE(NS)-FY
+         FZEDASE(NS)=FZEDASE(NS)-FZ
+
+
+      END IF
+
+!---- ENDOPEPTIDASE TETHERED TO HOOKS FROM CLEAVED PEPTIDE BOND:
+
+      IF(EDPEP(1,NS)>0)THEN
+
+         N1=EDPEP(1,NS)
+
+         IF(GMODE>=12)THEN
+            DX=X(N1)-XEDASE(NS)+PEPDIR(N1)*LEDASE
+         ELSE
+            DX=X(N1)-XEDASE(NS)
+         END IF
+
+         DY=Y(N1)-YEDASE(NS)
+         DZ=Z(N1)-ZEDASE(NS)
+
+         DIST=SQRT(DX**2+DY**2+DZ**2)
+         INVDIST=1.0D0/DIST
+
+         IF(GMODE>=12)THEN
+            F=-KEDASE*DIST
+         ELSE
+            F=-KEDASE*(DIST-LEDASE)
+         END IF
+
+         FX=F*DX*INVDIST
+         FY=F*DY*INVDIST
+         FZ=F*DZ*INVDIST
+
+         FXSYN(N1)=FXSYN(N1)+FX
+         FYSYN(N1)=FYSYN(N1)+FY
+         FZSYN(N1)=FZSYN(N1)+FZ
+
+         FXEDASE(NS)=FXEDASE(NS)-FX
+         FYEDASE(NS)=FYEDASE(NS)-FY
+         FZEDASE(NS)=FZEDASE(NS)-FZ
+
+      END IF
+
+      IF(EDPEP(2,NS)>0)THEN
+
+         N1=EDPEP(2,NS)
+
+         IF(GMODE>=12)THEN
+            DX=X(N1)-XEDASE(NS)+PEPDIR(N1)*LEDASE
+         ELSE
+            DX=X(N1)-XEDASE(NS)
+         END IF
+
+         DY=Y(N1)-YEDASE(NS)
+         DZ=Z(N1)-ZEDASE(NS)
+
+         DIST=SQRT(DX**2+DY**2+DZ**2)
+         INVDIST=1.0D0/DIST
+
+         IF(GMODE>=12)THEN
+            F=-KEDASE*DIST
+         ELSE
+            F=-KEDASE*(DIST-LEDASE)
+         END IF
+
+
+         FX=F*DX*INVDIST
+         FY=F*DY*INVDIST
+         FZ=F*DZ*INVDIST
+
+         FXSYN(N1)=FXSYN(N1)+FX
+         FYSYN(N1)=FYSYN(N1)+FY
+         FZSYN(N1)=FZSYN(N1)+FZ
+
+         FXEDASE(NS)=FXEDASE(NS)-FX
+         FYEDASE(NS)=FYEDASE(NS)-FY
+         FZEDASE(NS)=FZEDASE(NS)-FZ
+
+      END IF
+
+   END DO
+
+
+
+
+   END SUBROUTINE
+
+!=========================================================================
+
+   SUBROUTINE STERIC(NSYN,SYNTHESIS,NEINUM,NEIBOND,GLYNUM,NEIGLY,GLYTIP,KWALL, &
+                     X,Y,Z,FXSYN,FYSYN,FZSYN,FXGTASE,FYGTASE,FZGTASE,XGTASE,YGTASE,ZGTASE)
+
+
+   IMPLICIT NONE
+
+   INTEGER NSYN,NS,J,NA,NB,JL
+
+   INTEGER,DIMENSION(:,:),ALLOCATABLE::SYNTHESIS,GLYTIP
+   INTEGER,DIMENSION(:),ALLOCATABLE::NEINUM,GLYNUM
+   INTEGER,DIMENSION(:,:,:),ALLOCATABLE::NEIBOND,NEIGLY
+
+   DOUBLE PRECISION KWALL,F,PROJ,FX,FY,FZ,XPBP,YPBP,ZPBP,DX,DY,DZ,DIST,INVDIST
+   DOUBLE PRECISION XA,YA,ZA,XB,YB,ZB,M1,M2,A,B,C,T,V,DET,DA,DB
+
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: X,Y,Z,FXSYN,FYSYN,FZSYN
+   DOUBLE PRECISION,DIMENSION(:,:),ALLOCATABLE::FXGTASE,FYGTASE,FZGTASE,XGTASE,YGTASE,ZGTASE
+
+
+
+
+
+   DO NS=1,NSYN
+
+!---- INTERACTION WITH LIPOPROTEINS, CONSTRAINT FROM NEIGHBOR BONDS:
+
+      IF(SYNTHESIS(1,NS)==0.AND.SYNTHESIS(2,NS)==0)THEN
+         CYCLE
+      END IF
+
+      DO J=1,NEINUM(NS)
+
+         NA=NEIBOND(1,J,NS)
+         NB=NEIBOND(2,J,NS)
+
+         XA=X(NA); YA=Y(NA); ZA=Z(NA)
+
+         XB=X(NB); YB=Y(NB); ZB=Z(NB)
+
+!        FOR THE FIRST TRANSGLYCOSYLASE:
+
+         IF(SYNTHESIS(1,NS)==1)THEN
+
+            XPBP=XGTASE(1,NS); YPBP=YGTASE(1,NS); ZPBP=ZGTASE(1,NS)
+
+            M1=(XPBP-XA)*(XB-XA)-YA*(YB-YA)-ZA*(ZB-ZA)
+
+            M2=-YA*YPBP-ZA*ZPBP
+
+            A=YPBP*(YB-YA)+ZPBP*(ZB-ZA)
+
+            B=(XB-XA)**2+(YB-YA)**2+(ZB-ZA)**2
+
+            C=YPBP**2+ZPBP**2
+
+            DET=A**2-B*C
+
+            T=(M2*A-M1*C)/DET
+
+            IF(T<0.0D0.OR.T>1.0D0)THEN
+
+               PROJ=YA*YPBP+ZA*ZPBP
+
+               DX=XA-XPBP
+               DY=YA-PROJ*YPBP/(YPBP**2+ZPBP**2)
+               DZ=ZA-PROJ*ZPBP/(YPBP**2+ZPBP**2)
+
+               DIST=SQRT(DX**2+DY**2+DZ**2)
+
+               IF(DIST<0.5D0)THEN
+                  INVDIST=1.0D0/DIST
+                  F=KWALL*(0.5D0-DIST)**2*INVDIST**2
+
+                  FX=F*DX*INVDIST
+                  FY=F*DY*INVDIST
+                  FZ=F*DZ*INVDIST
+
+                  FXSYN(NA)=FXSYN(NA)+FX
+                  FYSYN(NA)=FYSYN(NA)+FY
+                  FZSYN(NA)=FZSYN(NA)+FZ
+
+                  FXGTASE(1,NS)=FXGTASE(1,NS)-FX
+                  FYGTASE(1,NS)=FYGTASE(1,NS)-FY
+                  FZGTASE(1,NS)=FZGTASE(1,NS)-FZ
+
+               END IF
+
+               PROJ=YB*YPBP+ZB*ZPBP
+
+               DX=XB-XPBP
+               DY=YB-PROJ*YPBP/(YPBP**2+ZPBP**2)
+               DZ=ZB-PROJ*ZPBP/(YPBP**2+ZPBP**2)
+
+               DIST=SQRT(DX**2+DY**2+DZ**2)
+
+               IF(DIST<0.5D0)THEN
+                  INVDIST=1.0D0/DIST
+
+                  F=KWALL*(0.5D0-DIST)**2*INVDIST**2
+
+                  FX=F*DX*INVDIST
+                  FY=F*DY*INVDIST
+                  FZ=F*DZ*INVDIST
+
+                  FXSYN(NB)=FXSYN(NB)+FX
+                  FYSYN(NB)=FYSYN(NB)+FY
+                  FZSYN(NB)=FZSYN(NB)+FZ
+
+                  FXGTASE(1,NS)=FXGTASE(1,NS)-FX
+                  FYGTASE(1,NS)=FYGTASE(1,NS)-FY
+                  FZGTASE(1,NS)=FZGTASE(1,NS)-FZ
+
+               END IF
+
+            ELSE
+
+               V=(M2*B-M1*A)/DET
+
+               DX=XPBP-XA-T*(XB-XA)
+
+               DY=-YA+V*YPBP-T*(YB-YA)
+
+               DZ=-ZA+V*ZPBP-T*(ZB-ZA)
+
+               DIST=SQRT(DX**2+DY**2+DZ**2)
+
+               IF(DIST<0.5D0)THEN
+
+                  INVDIST=1.0D0/DIST
+
+                  F=KWALL*(0.5D0-DIST)**2*INVDIST**2
+
+                  FX=F*DX*INVDIST
+                  FY=F*DY*INVDIST
+                  FZ=F*DZ*INVDIST
+
+                  FXGTASE(1,NS)=FXGTASE(1,NS)+FX
+                  FYGTASE(1,NS)=FYGTASE(1,NS)+FY
+                  FZGTASE(1,NS)=FZGTASE(1,NS)+FZ
+
+                  FXSYN(NA)=FXSYN(NA)-0.5D0*FX
+                  FYSYN(NA)=FYSYN(NA)-0.5D0*FY
+                  FZSYN(NA)=FZSYN(NA)-0.5D0*FZ
+
+                  FXSYN(NB)=FXSYN(NB)-0.5D0*FX
+                  FYSYN(NB)=FYSYN(NB)-0.5D0*FY
+                  FZSYN(NB)=FZSYN(NB)-0.5D0*FZ
+
+               END IF
+
+            END IF
+
+         END IF
+
+!        FOR THE SECOND TRANSGLYCOSYLASE:
+
+         IF(SYNTHESIS(2,NS)==1)THEN
+
+            XPBP=XGTASE(2,NS); YPBP=YGTASE(2,NS); ZPBP=ZGTASE(2,NS)
+
+            M1=(XPBP-XA)*(XB-XA)-YA*(YB-YA)-ZA*(ZB-ZA)
+
+            M2=-YA*YPBP-ZA*ZPBP
+
+            A=YPBP*(YB-YA)+ZPBP*(ZB-ZA)
+
+            B=(XB-XA)**2+(YB-YA)**2+(ZB-ZA)**2
+
+            C=YPBP**2+ZPBP**2
+
+            DET=A**2-B*C
+
+            T=(M2*A-M1*C)/DET
+
+            IF(T<0.0D0.OR.T>1.0D0)THEN
+
+               PROJ=YA*YPBP+ZA*ZPBP
+
+               DX=XA-XPBP
+               DY=YA-PROJ*YPBP/(YPBP**2+ZPBP**2)
+               DZ=ZA-PROJ*ZPBP/(YPBP**2+ZPBP**2)
+
+               DIST=SQRT(DX**2+DY**2+DZ**2)
+
+               IF(DIST<0.5D0)THEN
+                  INVDIST=1.0D0/DIST
+                  F=KWALL*(0.5D0-DIST)**2*INVDIST**2
+
+                  FX=F*DX*INVDIST
+                  FY=F*DY*INVDIST
+                  FZ=F*DZ*INVDIST
+
+                  FXSYN(NA)=FXSYN(NA)+FX
+                  FYSYN(NA)=FYSYN(NA)+FY
+                  FZSYN(NA)=FZSYN(NA)+FZ
+
+                  FXGTASE(2,NS)=FXGTASE(2,NS)-FX
+                  FYGTASE(2,NS)=FYGTASE(2,NS)-FY
+                  FZGTASE(2,NS)=FZGTASE(2,NS)-FZ
+
+               END IF
+
+               PROJ=YB*YPBP+ZB*ZPBP
+
+               DX=XB-XPBP
+               DY=YB-PROJ*YPBP/(YPBP**2+ZPBP**2)
+               DZ=ZB-PROJ*ZPBP/(YPBP**2+ZPBP**2)
+
+               DIST=SQRT(DX**2+DY**2+DZ**2)
+
+               IF(DIST<0.5D0)THEN
+                  INVDIST=1.0D0/DIST
+
+                  F=KWALL*(0.5D0-DIST)**2*INVDIST**2
+
+                  FX=F*DX*INVDIST
+                  FY=F*DY*INVDIST
+                  FZ=F*DZ*INVDIST
+
+                  FXSYN(NB)=FXSYN(NB)+FX
+                  FYSYN(NB)=FYSYN(NB)+FY
+                  FZSYN(NB)=FZSYN(NB)+FZ
+
+                  FXGTASE(2,NS)=FXGTASE(2,NS)-FX
+                  FYGTASE(2,NS)=FYGTASE(2,NS)-FY
+                  FZGTASE(2,NS)=FZGTASE(2,NS)-FZ
+
+               END IF
+
+            ELSE
+
+               V=(M2*B-M1*A)/DET
+
+               DX=XPBP-XA-T*(XB-XA)
+
+               DY=-YA+V*YPBP-T*(YB-YA)
+
+               DZ=-ZA+V*ZPBP-T*(ZB-ZA)
+
+               DIST=SQRT(DX**2+DY**2+DZ**2)
+
+               IF(DIST<0.5D0)THEN
+
+                  INVDIST=1.0D0/DIST
+
+                  F=KWALL*(0.5D0-DIST)**2*INVDIST**2
+
+                  FX=F*DX*INVDIST
+                  FY=F*DY*INVDIST
+                  FZ=F*DZ*INVDIST
+
+                  FXGTASE(2,NS)=FXGTASE(2,NS)+FX
+                  FYGTASE(2,NS)=FYGTASE(2,NS)+FY
+                  FZGTASE(2,NS)=FZGTASE(2,NS)+FZ
+
+                  FXSYN(NA)=FXSYN(NA)-0.5D0*FX
+                  FYSYN(NA)=FYSYN(NA)-0.5D0*FY
+                  FZSYN(NA)=FZSYN(NA)-0.5D0*FZ
+
+                  FXSYN(NB)=FXSYN(NB)-0.5D0*FX
+                  FYSYN(NB)=FYSYN(NB)-0.5D0*FY
+                  FZSYN(NB)=FZSYN(NB)-0.5D0*FZ
+
+               END IF
+
+            END IF
+
+         END IF
+
+      END DO
+
+!----------------------------------------------------------------------------------
+
+!     STERIC HINDRANCE PREVENTS OLD STRANDS GOING THROUGH BETWEEN TWO GTASES:
+
+      IF(SYNTHESIS(1,NS)==0.OR.SYNTHESIS(2,NS)==0)THEN
+         CYCLE
+      END IF
+
+      XA=XGTASE(1,NS); YA=YGTASE(1,NS); ZA=ZGTASE(1,NS)
+
+      XB=XGTASE(2,NS); YB=YGTASE(2,NS); ZB=ZGTASE(2,NS)
+
+      DO J=1,GLYNUM(NS)
+
+!        THE FIRST BEAD ON THE BOND:
+
+         NA=NEIGLY(1,J,NS)
+
+         IF(GLYTIP(1,NS)==NA.OR.GLYTIP(2,NS)==NA)THEN
+            GOTO 45
+         END IF
+
+         XPBP=X(NA); YPBP=Y(NA); ZPBP=Z(NA)
+
+         DA=(XA-XPBP)**2+(YA-YPBP)**2+(ZA-ZPBP)**2
+         DB=(XB-XPBP)**2+(YB-YPBP)**2+(ZB-ZPBP)**2
+
+         IF(DA>4.0D0.AND.DB>4.0D0)THEN
+            GOTO 45
+         END IF
+
+         M1=(XPBP-XA)*(XB-XA)-YA*(YB-YA)-ZA*(ZB-ZA)
+
+         M2=-YA*YPBP-ZA*ZPBP
+
+         A=YPBP*(YB-YA)+ZPBP*(ZB-ZA)
+
+         B=(XB-XA)**2+(YB-YA)**2+(ZB-ZA)**2
+
+         C=YPBP**2+ZPBP**2
+
+         DET=A**2-B*C
+
+         T=(M2*A-M1*C)/DET
+
+         IF(T<0.0D0.OR.T>1.0D0)THEN
+
+            PROJ=YA*YPBP+ZA*ZPBP
+
+            DX=XA-XPBP
+            DY=YA-PROJ*YPBP/(YPBP**2+ZPBP**2)
+            DZ=ZA-PROJ*ZPBP/(YPBP**2+ZPBP**2)
+
+            DIST=SQRT(DX**2+DY**2+DZ**2)
+
+            IF(DIST<0.5D0)THEN
+               INVDIST=1.0D0/DIST
+               F=KWALL*(0.5D0-DIST)**2*INVDIST**2
+
+               FX=F*DX*INVDIST
+               FY=F*DY*INVDIST
+               FZ=F*DZ*INVDIST
+
+               FXSYN(NA)=FXSYN(NA)-FX
+               FYSYN(NA)=FYSYN(NA)-FY
+               FZSYN(NA)=FZSYN(NA)-FZ
+
+               FXGTASE(1,NS)=FXGTASE(1,NS)+FX
+               FYGTASE(1,NS)=FYGTASE(1,NS)+FY
+               FZGTASE(1,NS)=FZGTASE(1,NS)+FZ
+
+            END IF
+
+            PROJ=YB*YPBP+ZB*ZPBP
+
+            DX=XB-XPBP
+            DY=YB-PROJ*YPBP/(YPBP**2+ZPBP**2)
+            DZ=ZB-PROJ*ZPBP/(YPBP**2+ZPBP**2)
+
+            DIST=SQRT(DX**2+DY**2+DZ**2)
+
+            IF(DIST<0.5D0)THEN
+               INVDIST=1.0D0/DIST
+
+               F=KWALL*(0.5D0-DIST)**2*INVDIST**2
+
+               FX=F*DX*INVDIST
+               FY=F*DY*INVDIST
+               FZ=F*DZ*INVDIST
+
+               FXSYN(NA)=FXSYN(NA)-FX
+               FYSYN(NA)=FYSYN(NA)-FY
+               FZSYN(NA)=FZSYN(NA)-FZ
+
+               FXGTASE(2,NS)=FXGTASE(2,NS)+FX
+               FYGTASE(2,NS)=FYGTASE(2,NS)+FY
+               FZGTASE(2,NS)=FZGTASE(2,NS)+FZ
+
+            END IF
+
+         ELSE
+
+            V=(M2*B-M1*A)/DET
+
+            DX=XPBP-XA-T*(XB-XA)
+
+            DY=-YA+V*YPBP-T*(YB-YA)
+
+            DZ=-ZA+V*ZPBP-T*(ZB-ZA)
+
+            DIST=SQRT(DX**2+DY**2+DZ**2)
+
+            IF(DIST<0.5D0)THEN
+
+               INVDIST=1.0D0/DIST
+
+               F=KWALL*(0.5D0-DIST)**2*INVDIST**2
+
+               FX=F*DX*INVDIST
+               FY=F*DY*INVDIST
+               FZ=F*DZ*INVDIST
+
+               FXSYN(NA)=FXSYN(NA)+FX
+               FYSYN(NA)=FYSYN(NA)+FY
+               FZSYN(NA)=FZSYN(NA)+FZ
+
+               FXGTASE(1,NS)=FXGTASE(1,NS)-0.5D0*FX
+               FYGTASE(1,NS)=FYGTASE(1,NS)-0.5D0*FY
+               FZGTASE(1,NS)=FZGTASE(1,NS)-0.5D0*FZ
+
+               FXGTASE(2,NS)=FXGTASE(2,NS)-0.5D0*FX
+               FYGTASE(2,NS)=FYGTASE(2,NS)-0.5D0*FY
+               FZGTASE(2,NS)=FZGTASE(2,NS)-0.5D0*FZ
+
+            END IF
+
+         END IF
+
+
+!-------------
+!        THE SECOND BEAD ON THE BOND:
+
+45       NA=NEIGLY(2,J,NS)
+
+         IF(GLYTIP(1,NS)==NA.OR.GLYTIP(2,NS)==NA)THEN
+            CYCLE
+         END IF
+
+         XPBP=X(NA); YPBP=Y(NA); ZPBP=Z(NA)
+
+         DA=(XA-XPBP)**2+(YA-YPBP)**2+(ZA-ZPBP)**2
+         DB=(XB-XPBP)**2+(YB-YPBP)**2+(ZB-ZPBP)**2
+
+         IF(DA>4.0D0.AND.DB>4.0D0)THEN
+            CYCLE
+         END IF
+
+         M1=(XPBP-XA)*(XB-XA)-YA*(YB-YA)-ZA*(ZB-ZA)
+
+         M2=-YA*YPBP-ZA*ZPBP
+
+         A=YPBP*(YB-YA)+ZPBP*(ZB-ZA)
+
+         B=(XB-XA)**2+(YB-YA)**2+(ZB-ZA)**2
+
+         C=YPBP**2+ZPBP**2
+
+         DET=A**2-B*C
+
+         T=(M2*A-M1*C)/DET
+
+         IF(T<0.0D0.OR.T>1.0D0)THEN
+
+            PROJ=YA*YPBP+ZA*ZPBP
+
+            DX=XA-XPBP
+            DY=YA-PROJ*YPBP/(YPBP**2+ZPBP**2)
+            DZ=ZA-PROJ*ZPBP/(YPBP**2+ZPBP**2)
+
+            DIST=SQRT(DX**2+DY**2+DZ**2)
+
+            IF(DIST<0.5D0)THEN
+               INVDIST=1.0D0/DIST
+               F=KWALL*(0.5D0-DIST)**2*INVDIST**2
+
+               FX=F*DX*INVDIST
+               FY=F*DY*INVDIST
+               FZ=F*DZ*INVDIST
+
+               FXSYN(NA)=FXSYN(NA)-FX
+               FYSYN(NA)=FYSYN(NA)-FY
+               FZSYN(NA)=FZSYN(NA)-FZ
+
+               FXGTASE(1,NS)=FXGTASE(1,NS)+FX
+               FYGTASE(1,NS)=FYGTASE(1,NS)+FY
+               FZGTASE(1,NS)=FZGTASE(1,NS)+FZ
+
+            END IF
+
+            PROJ=YB*YPBP+ZB*ZPBP
+
+            DX=XB-XPBP
+            DY=YB-PROJ*YPBP/(YPBP**2+ZPBP**2)
+            DZ=ZB-PROJ*ZPBP/(YPBP**2+ZPBP**2)
+
+            DIST=SQRT(DX**2+DY**2+DZ**2)
+
+            IF(DIST<0.5D0)THEN
+               INVDIST=1.0D0/DIST
+
+               F=KWALL*(0.5D0-DIST)**2*INVDIST**2
+
+               FX=F*DX*INVDIST
+               FY=F*DY*INVDIST
+               FZ=F*DZ*INVDIST
+
+               FXSYN(NA)=FXSYN(NA)-FX
+               FYSYN(NA)=FYSYN(NA)-FY
+               FZSYN(NA)=FZSYN(NA)-FZ
+
+               FXGTASE(2,NS)=FXGTASE(2,NS)+FX
+               FYGTASE(2,NS)=FYGTASE(2,NS)+FY
+               FZGTASE(2,NS)=FZGTASE(2,NS)+FZ
+
+            END IF
+
+         ELSE
+
+            V=(M2*B-M1*A)/DET
+
+            DX=XPBP-XA-T*(XB-XA)
+
+            DY=-YA+V*YPBP-T*(YB-YA)
+
+            DZ=-ZA+V*ZPBP-T*(ZB-ZA)
+
+            DIST=SQRT(DX**2+DY**2+DZ**2)
+
+            IF(DIST<0.5D0)THEN
+
+               INVDIST=1.0D0/DIST
+
+               F=KWALL*(0.5D0-DIST)**2*INVDIST**2
+
+               FX=F*DX*INVDIST
+               FY=F*DY*INVDIST
+               FZ=F*DZ*INVDIST
+
+               FXSYN(NA)=FXSYN(NA)+FX
+               FYSYN(NA)=FYSYN(NA)+FY
+               FZSYN(NA)=FZSYN(NA)+FZ
+
+               FXGTASE(1,NS)=FXGTASE(1,NS)-0.5D0*FX
+               FYGTASE(1,NS)=FYGTASE(1,NS)-0.5D0*FY
+               FZGTASE(1,NS)=FZGTASE(1,NS)-0.5D0*FZ
+
+               FXGTASE(2,NS)=FXGTASE(2,NS)-0.5D0*FX
+               FYGTASE(2,NS)=FYGTASE(2,NS)-0.5D0*FY
+               FZGTASE(2,NS)=FZGTASE(2,NS)-0.5D0*FZ
+
+            END IF
+
+         END IF
+
+      END DO
+
+
+   END DO
+
+
+   END SUBROUTINE
+
+!==========================================
+
+   SUBROUTINE CALSURF(NSYN,SYNPG,PGID,PGLEN,XEDASE,YEDASE,ZEDASE,NATOM,DNOR,ATOR,X,Y,Z, &
+                      SYNRAD,ATOMRAD,GTRAD,GMODE,XGTASE,YGTASE,ZGTASE)
+
+   IMPLICIT NONE
+
+   INTEGER NSYN,NATOM,NS,N,NA,NCOUNT,J,IPG,GMODE
+   INTEGER, ALLOCATABLE, DIMENSION(:):: DNOR,ATOR,PGLEN,MARK
+   INTEGER, ALLOCATABLE, DIMENSION(:,:):: SYNPG,PGID
+   DOUBLE PRECISION DIST
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:)::X,Y,Z,XEDASE,YEDASE,ZEDASE,SYNRAD,ATOMRAD,GTRAD
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:,:)::XGTASE,YGTASE,ZGTASE
+
+   ALLOCATE(MARK(NATOM))
+   MARK=0
+
+   DO NS=1,NSYN
+
+      IF(SYNPG(1,NS)>0)THEN
+         IPG=SYNPG(1,NS)
+
+         MARK(PGID(1:PGLEN(IPG),IPG))=1
+      END IF
+
+      IF(SYNPG(2,NS)>0)THEN
+         IPG=SYNPG(2,NS)
+
+         MARK(PGID(1:PGLEN(IPG),IPG))=1
+      END IF
+
+   END DO
+
+
+   DO NS=1,NSYN
+
+      DIST=2.0D0
+
+      DO J=1,20
+
+         DIST=DIST+1.0D0
+
+         NCOUNT=0
+
+         SYNRAD(NS)=0.0D0
+
+         DO N=1,NATOM
+
+            IF(ABS(X(N)-XEDASE(NS))>DIST.OR.ABS(Y(N)-YEDASE(NS))>DIST.OR.ABS(Z(N)-ZEDASE(NS))>DIST.OR.MARK(N)==1)THEN
+               CYCLE
+            END IF
+
+            NCOUNT=NCOUNT+1
+
+            SYNRAD(NS)=SYNRAD(NS)+SQRT(Y(N)**2+Z(N)**2)
+
+         END DO
+
+         IF(NCOUNT>=4)THEN
+            SYNRAD(NS)=SYNRAD(NS)/NCOUNT
+            EXIT
+         END IF
+
+      END DO
+
+      IF(NCOUNT<4)THEN
+         PRINT*,'COULD NOT CALCULATE SYNRAD FOR SYNCOMP',NS
+         PRINT*,XEDASE(NS),YEDASE(NS),ZEDASE(NS)
+         STOP
+      END IF
+
+      IF(GMODE>0)THEN
+         GTRAD(NS)=SYNRAD(NS)
+         CYCLE
+      END IF
+
+      DIST=2.0D0
+
+      DO J=1,20
+
+         DIST=DIST+1.0D0
+
+         NCOUNT=0
+
+         GTRAD(NS)=0.0D0
+
+         DO N=1,NATOM
+
+            IF(ABS(X(N)-XGTASE(1,NS))>DIST.OR.ABS(Y(N)-YGTASE(1,NS))>DIST.OR.ABS(Z(N)-ZGTASE(1,NS))>DIST.OR.MARK(N)==1)THEN
+               CYCLE
+            END IF
+
+            NCOUNT=NCOUNT+1
+
+            GTRAD(NS)=GTRAD(NS)+SQRT(Y(N)**2+Z(N)**2)
+
+         END DO
+
+         IF(NCOUNT>=4)THEN
+            GTRAD(NS)=GTRAD(NS)/NCOUNT
+            EXIT
+         END IF
+
+      END DO
+
+      IF(NCOUNT<4)THEN
+         PRINT*,'COULD NOT CALCULATE SYNRAD FOR GTASE',NS
+         PRINT*,XGTASE(1,NS),YGTASE(1,NS),ZGTASE(1,NS)
+         STOP
+      END IF
+
+   END DO
+
+
+   DEALLOCATE(MARK)
+
+!---------------------
+
+!$OMP PARALLEL &
+!$OMP DEFAULT(NONE) &
+!$OMP PRIVATE(NA,N,J,NCOUNT,DIST) &
+!$OMP SHARED(NATOM,DNOR,ATOR,X,Y,Z,ATOMRAD)
+!$OMP DO 
+
+
+   DO NA=1,NATOM
+
+      IF(DNOR(NA)==0.OR.ATOR(NA)==0)THEN
+         CYCLE
+      END IF
+
+      DIST=2.0D0
+
+      DO J=1,20
+
+         DIST=DIST+1.0D0
+
+         NCOUNT=0
+
+         ATOMRAD(NA)=0.0D0
+
+         DO N=1,NATOM
+
+            IF(ABS(X(N)-X(NA))>DIST.OR.ABS(Y(N)-Y(NA))>DIST.OR.ABS(Z(N)-Z(NA))>DIST.OR.N==NA)THEN
+               CYCLE
+            END IF
+
+            NCOUNT=NCOUNT+1
+
+            ATOMRAD(NA)=ATOMRAD(NA)+SQRT(Y(N)**2+Z(N)**2)
+
+         END DO
+
+         IF(NCOUNT>=4)THEN
+            ATOMRAD(NA)=ATOMRAD(NA)/NCOUNT
+            EXIT
+         END IF
+
+      END DO
+
+      IF(NCOUNT<4)THEN
+         PRINT*,'COULD NOT CALCULATE ATOMRAD FOR',NA
+         PRINT*,X(NA),Y(NA),Z(NA)
+         STOP
+      END IF
+
+   END DO
+
+!$OMP END DO NOWAIT
+!$OMP END PARALLEL
+
+
+   END SUBROUTINE
+
+!==========================================
+
+   SUBROUTINE SURFLINK(NSYN,SYNRAD,GTRAD,YGTASE,ZGTASE,YTPASE,ZTPASE,YEDASE,ZEDASE,FYGTASE,FZGTASE,FYTPASE,FZTPASE, &
+                    FYEDASE,FZEDASE,NPG,PGID,PGLEN,PGTYP,DNOR,ATOR,ATOMRAD,Y,Z,FYSUR,FZSUR,KSUR)
+
+   IMPLICIT NONE
+
+   INTEGER NSYN,N,NPG,NR,JR,N1,N2,N3,JS
+   INTEGER, ALLOCATABLE, DIMENSION(:)::ATOR,DNOR,PGLEN,PGTYP
+   INTEGER, ALLOCATABLE, DIMENSION(:,:)::PGID
+
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:)::SYNRAD,YEDASE,ZEDASE,GTRAD
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:)::FYEDASE,FZEDASE
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:,:)::FYTPASE,FZTPASE,YTPASE,ZTPASE,FYGTASE,FZGTASE,YGTASE,ZGTASE
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:)::ATOMRAD,X,Y,Z,FXSUR,FYSUR,FZSUR
+   DOUBLE PRECISION KSUR,RAD,F
+
+
+   DO N=1,NSYN
+
+!     CONSTRAINT ON TRANSGLYCOSYLASES:
+
+         RAD=SQRT(YGTASE(1,N)**2+ZGTASE(1,N)**2)
+
+         F=-KSUR*(RAD-GTRAD(N))
+
+         FYGTASE(1,N)=FYGTASE(1,N)+F*YGTASE(1,N)/RAD
+
+         FZGTASE(1,N)=FZGTASE(1,N)+F*ZGTASE(1,N)/RAD
+
+
+         RAD=SQRT(YGTASE(2,N)**2+ZGTASE(2,N)**2)
+
+         F=-KSUR*(RAD-GTRAD(N))
+
+         FYGTASE(2,N)=FYGTASE(2,N)+F*YGTASE(2,N)/RAD
+
+         FZGTASE(2,N)=FZGTASE(2,N)+F*ZGTASE(2,N)/RAD
+
+!     CONSTRAINT ON TRANSPEPTIDASES
+
+         RAD=SQRT(YTPASE(1,N)**2+ZTPASE(1,N)**2)
+
+         F=-KSUR*(RAD-GTRAD(N))
+
+         FYTPASE(1,N)=FYTPASE(1,N)+F*YTPASE(1,N)/RAD
+
+         FZTPASE(1,N)=FZTPASE(1,N)+F*ZTPASE(1,N)/RAD
+
+
+         RAD=SQRT(YTPASE(2,N)**2+ZTPASE(2,N)**2)
+
+         F=-KSUR*(RAD-GTRAD(N))
+
+         FYTPASE(2,N)=FYTPASE(2,N)+F*YTPASE(2,N)/RAD
+
+         FZTPASE(2,N)=FZTPASE(2,N)+F*ZTPASE(2,N)/RAD
+
+
+         RAD=SQRT(YTPASE(3,N)**2+ZTPASE(3,N)**2)
+
+         F=-KSUR*(RAD-GTRAD(N))
+
+         FYTPASE(3,N)=FYTPASE(3,N)+F*YTPASE(3,N)/RAD
+
+         FZTPASE(3,N)=FZTPASE(3,N)+F*ZTPASE(3,N)/RAD
+
+!     CONSTRAINT ON ENDOPEPTIDASE:
+
+         RAD=SQRT(YEDASE(N)**2+ZEDASE(N)**2)
+
+         F=-KSUR*(RAD-SYNRAD(N))
+
+         FYEDASE(N)=FYEDASE(N)+F*YEDASE(N)/RAD
+
+         FZEDASE(N)=FZEDASE(N)+F*ZEDASE(N)/RAD
+
+   END DO
+
+!----------------------------------------
+
+   FYSUR=0.0D0; FZSUR=0.0D0
+
+!$OMP PARALLEL &
+!$OMP DEFAULT(NONE) &
+!$OMP PRIVATE(NR,JR,N1,N2,N3,RAD,F) &
+!$OMP SHARED(NPG,PGID,PGLEN,PGTYP,Y,Z,ATOR,DNOR,ATOMRAD,FYSUR,FZSUR,KSUR)
+!$OMP DO 
+
+   DO NR=1,NPG
+
+      IF(PGTYP(NR)==0)THEN
+         CYCLE
+      END IF
+
+      IF(PGLEN(NR)<3)THEN
+
+         N1=PGID(1,NR)
+         N2=PGID(PGLEN(NR),NR)
+
+         IF(DNOR(N1)*ATOR(N1)*DNOR(N2)*ATOR(N2)/=0)THEN
+
+            RAD=0.5*SQRT((Y(N1)+Y(N2))**2+(Z(N1)+Z(N2))**2)
+
+            F=-KSUR*(RAD-0.5*(ATOMRAD(N1)+ATOMRAD(N2)))
+
+            FYSUR(N1)=0.5*F*(Y(N1)+Y(N2))/RAD
+            FZSUR(N1)=0.5*F*(Z(N1)+Z(N2))/RAD
+
+            FYSUR(N2)=FYSUR(N1)
+            FZSUR(N2)=FZSUR(N1)
+
+         END IF
+
+         CYCLE
+      END IF
+
+      DO JR=2,PGLEN(NR)-1
+
+         N1=PGID(JR-1,NR)
+         N2=PGID(JR,NR)
+         N3=PGID(JR+1,NR)
+
+         IF(DNOR(N1)/=0.AND.ATOR(N1)/=0.AND.DNOR(N2)/=0.AND.ATOR(N2)/=0.AND.DNOR(N3)/=0.AND.ATOR(N3)/=0)THEN
+
+            RAD=SQRT(Y(N2)**2+Z(N2)**2)
+
+            F=-KSUR*(RAD-ATOMRAD(N2))
+
+            FYSUR(N2)=F*Y(N2)/RAD
+
+            FZSUR(N2)=F*Z(N2)/RAD
+
+         END IF
+
+      END DO
+
+   END DO
+
+!$OMP END DO NOWAIT
+!$OMP END PARALLEL
+
+   END SUBROUTINE
+
+
+!==========================================
+
+   SUBROUTINE DCDHEADER(JUNIT,JFILE,NTOTAL)
+
+   IMPLICIT NONE
+
+   CHARACTER*4 COOR
+   CHARACTER*80 STRING1,STRING2
+   INTEGER IFIRST,NFRAME,NFREQ,ZEROS5(5),PEROFF,ZEROS7(7),TWO,TWENTYFOUR,NTOT,JUNIT,JFILE,NTOTAL
+   INTEGER*8 JDELTA
+   CHARACTER (LEN=64) FILEDCD
+   CHARACTER ZERO*1,CHARID1*1,CHARID2*2,CHARID3*3
+
+   WRITE(ZERO,'(I1)')0
+
+   IF(JFILE<10)THEN
+      WRITE(CHARID1,'(I1)')JFILE
+      FILEDCD='visual'//ZERO//ZERO//CHARID1//'.dcd'
+   ELSE IF(JFILE<100)THEN
+      WRITE(CHARID2,'(I2)')JFILE
+      FILEDCD='visual'//ZERO//CHARID2//'.dcd'
+   ELSE IF(JFILE<1000)THEN
+      WRITE(CHARID3,'(I3)')JFILE
+      FILEDCD='visual'//CHARID3//'.dcd'
+   ELSE
+      PRINT*,'TOO MANY DCD FILES, STOP NOW'
+      STOP
+   END IF
+
+   OPEN(JUNIT,FILE=FILEDCD,FORM='UNFORMATTED')
+
+   COOR='CORD'; NFRAME=10000; IFIRST=0; NFREQ=1; NTOT=100
+   ZEROS5=0; JDELTA=1; PEROFF=0; ZEROS7=0; TWENTYFOUR=24; TWO=2
+   STRING1='HELLOOOOOOO'; STRING2='WHAT THE HELL!'
+
+   WRITE(JUNIT)COOR,NFRAME,IFIRST,NFREQ,NTOT,ZEROS5,JDELTA,PEROFF,ZEROS7,TWENTYFOUR
+   WRITE(JUNIT)TWO,STRING1,STRING2
+   WRITE(JUNIT)NTOTAL
+
+!   PRINT*,'OPEN DCD FILE #',JFILE
+
+   END SUBROUTINE
+
+!==============================================================================
+
+   SUBROUTINE WRITEDCD(JUNIT,NTOTAL,NATOMSTART,NATOM,NPGSTART,NPG,DNOR,ATOR,PEPDIR,X,Y,Z,SYNPG, &
+              SYNTHESIS,PGID,PGLEN,NGLYNEW,NBONDPEP,BONDPEP,BONTYP,NPEPTOTAL,NSYN,NSYNMAX,TPPEP, &
+              EDHOLD,EDPEP,XGTASE,YGTASE,ZGTASE,XTPASE,YTPASE,ZTPASE,XEDASE,YEDASE,ZEDASE,NFRAME)
+
+   IMPLICIT NONE
+
+   INTEGER JUNIT,NTOTAL,NATOMSTART,NPGSTART,NPG,NGLYNEW,NBONDPEP,NPEPTOTAL,NSYN,NSYNMAX,JW,NR,JR,NS,NB
+   INTEGER NFRAME,JCYCLE,NA,NATOM,JSTART,JSTOP,CHECK,JS,JEXIT
+   INTEGER, ALLOCATABLE, DIMENSION(:)::PGLEN,BONTYP,ATOR,DNOR,PEPDIR
+   INTEGER, ALLOCATABLE, DIMENSION(:,:)::PGID,BONDPEP,EDHOLD,SYNPG,SYNTHESIS,EDPEP
+   INTEGER, ALLOCATABLE, DIMENSION(:,:,:)::TPPEP
+   REAL, ALLOCATABLE, DIMENSION(:)::XW,YW,ZW
+   REAL R(3)
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:)::X,Y,Z,XEDASE,YEDASE,ZEDASE
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:,:)::XTPASE,YTPASE,ZTPASE,XGTASE,YGTASE,ZGTASE
+
+   NFRAME=NFRAME+1
+
+   ALLOCATE(XW(NTOTAL),YW(NTOTAL),ZW(NTOTAL))
+
+!---------------
+!  OLD PG:
+
+   XW(1:NATOMSTART)=X(1:NATOMSTART)
+   YW(1:NATOMSTART)=Y(1:NATOMSTART)
+   ZW(1:NATOMSTART)=Z(1:NATOMSTART)
+
+
+   JW=NATOMSTART
+
+!---------------
+!  NEW PG
+
+   IF(NPG==NPGSTART)THEN
+      GOTO 10
+   END IF
+
+   DO NR=NPGSTART+1,NPG
+
+      JSTART=0
+
+      DO JR=1,PGLEN(NR)
+         IF(ATOR(PGID(JR,NR))/=-1.OR.DNOR(PGID(JR,NR))/=-1)THEN
+            JSTART=JR
+            EXIT
+         END IF
+      END DO
+
+      IF(JSTART==0)THEN
+         CYCLE
+      END IF
+
+      DO JR=PGLEN(NR),1,-1
+         IF(ATOR(PGID(JR,NR))/=-1.OR.DNOR(PGID(JR,NR))/=-1)THEN
+            JSTOP=JR
+            EXIT
+         END IF
+      END DO
+
+      IF(JSTART<JSTOP)THEN
+         DO JR=JSTART,JSTOP-1
+
+            JW=JW+1
+            XW(JW)=X(PGID(JR,NR))
+            YW(JW)=Y(PGID(JR,NR))
+            ZW(JW)=Z(PGID(JR,NR))
+
+            JW=JW+1
+            XW(JW)=X(PGID(JR+1,NR))
+            YW(JW)=Y(PGID(JR+1,NR))
+            ZW(JW)=Z(PGID(JR+1,NR))
+
+         END DO
+      END IF
+
+!     FOR SINGLE-UNIT STRANDS:
+
+      JW=JW+1
+      XW(JW)=X(PGID(JSTOP,NR))
+      YW(JW)=Y(PGID(JSTOP,NR))
+      ZW(JW)=Z(PGID(JSTOP,NR))
+
+      JW=JW+1
+      XW(JW)=X(PGID(JSTOP,NR))
+      YW(JW)=Y(PGID(JSTOP,NR))
+      ZW(JW)=Z(PGID(JSTOP,NR))
+
+      JEXIT=0
+
+!     VISUALIZE THE CONNECTION BETWEEN GTASES AND STRAND TIPS:
+
+      DO NS=1,NSYN
+
+         DO JS=1,2
+
+            IF(SYNPG(JS,NS)==NR.AND.SYNTHESIS(JS,NS)==1)THEN
+               JW=JW+1
+               XW(JW)=X(PGID(JSTOP,NR))
+               YW(JW)=Y(PGID(JSTOP,NR))
+               ZW(JW)=Z(PGID(JSTOP,NR))
+
+               JW=JW+1
+
+               XW(JW)=XGTASE(JS,NS)
+               YW(JW)=YGTASE(JS,NS)
+               ZW(JW)=ZGTASE(JS,NS)
+
+               JEXIT=1
+               EXIT
+            END IF
+
+         END DO
+
+         IF(JEXIT==1)THEN
+            EXIT
+         END IF
+
+      END DO
+
+   END DO
+
+!  THE FUTURE UNITS ARE KEPT AT THE CENTER:
+
+10 XW(JW+1:NATOMSTART+2*NGLYNEW)=0.0
+   YW(JW+1:NATOMSTART+2*NGLYNEW)=0.0
+   ZW(JW+1:NATOMSTART+2*NGLYNEW)=0.0
+
+   JW=NATOMSTART+2*NGLYNEW
+
+
+!--------------------
+!  PEPTIDE CROSSLINKS:
+
+   DO NB=1,NBONDPEP
+      IF(BONTYP(NB)==0)THEN
+         CYCLE
+      END IF
+
+      XW(JW+1:JW+2)=X(BONDPEP(1:2,NB))
+      YW(JW+1:JW+2)=Y(BONDPEP(1:2,NB))
+      ZW(JW+1:JW+2)=Z(BONDPEP(1:2,NB))
+      JW=JW+2
+   END DO
+
+!--------------------
+
+!  SHOW FREE HOOKS:
+
+   DO NA=1,NATOM
+
+      IF(DNOR(NA)==0.OR.ATOR(NA)/=1)THEN
+         CYCLE
+      END IF
+
+      JCYCLE=0
+
+      JEXIT=0
+
+      DO NS=1,NSYN
+
+         IF(TPPEP(1,1,NS)==NA.OR.TPPEP(2,1,NS)==NA)THEN
+            JCYCLE=1
+            EXIT
+         END IF
+
+         IF(TPPEP(1,2,NS)==NA.OR.TPPEP(2,2,NS)==NA)THEN
+            JCYCLE=1
+            EXIT
+         END IF
+
+         IF(TPPEP(1,3,NS)==NA.OR.TPPEP(2,3,NS)==NA)THEN
+            JCYCLE=1
+            EXIT
+         END IF
+
+      END DO
+
+      IF(JCYCLE==1)THEN
+         CYCLE
+      END IF
+
+      DO NS=1,NSYN
+         IF(EDHOLD(1,NS)==NA.OR.EDHOLD(2,NS)==NA)THEN
+            JCYCLE=1
+            EXIT
+         END IF
+      END DO
+
+      IF(JCYCLE==1)THEN
+         CYCLE
+      END IF
+
+      XW(JW+1)=X(NA)
+      YW(JW+1)=Y(NA)
+      ZW(JW+1)=Z(NA)
+
+      CALL RANDOM_NUMBER(R)
+
+      XW(JW+2)=X(NA)+(R(1)-0.5)/10+0.6*PEPDIR(NA)
+      YW(JW+2)=Y(NA)+(R(2)-0.5)/10
+      ZW(JW+2)=Z(NA)+(R(3)-0.5)/10
+
+      JW=JW+2
+
+   END DO
+
+!  FUTURE CROSSLINKS ARE KEPT AT THE CENTER:
+
+   XW(JW+1:NATOMSTART+2*NGLYNEW+2*NPEPTOTAL)=0.0
+   YW(JW+1:NATOMSTART+2*NGLYNEW+2*NPEPTOTAL)=0.0
+   ZW(JW+1:NATOMSTART+2*NGLYNEW+2*NPEPTOTAL)=0.0
+
+   JW=NATOMSTART+2*NGLYNEW+2*NPEPTOTAL
+
+!---------------------
+!  TRANSGLYCOSYLASES:
+
+   XW(JW+1:JW+NSYN)=XGTASE(1,1:NSYN)
+   YW(JW+1:JW+NSYN)=YGTASE(1,1:NSYN)
+   ZW(JW+1:JW+NSYN)=ZGTASE(1,1:NSYN)
+
+   XW(JW+NSYN:JW+NSYNMAX)=XW(JW+NSYN)
+   YW(JW+NSYN:JW+NSYNMAX)=YW(JW+NSYN)
+   ZW(JW+NSYN:JW+NSYNMAX)=ZW(JW+NSYN)
+
+   JW=JW+NSYNMAX
+
+   XW(JW+1:JW+NSYN)=XGTASE(2,1:NSYN)
+   YW(JW+1:JW+NSYN)=YGTASE(2,1:NSYN)
+   ZW(JW+1:JW+NSYN)=ZGTASE(2,1:NSYN)
+
+   XW(JW+NSYN:JW+NSYNMAX)=XW(JW+NSYN)
+   YW(JW+NSYN:JW+NSYNMAX)=YW(JW+NSYN)
+   ZW(JW+NSYN:JW+NSYNMAX)=ZW(JW+NSYN)
+
+   JW=JW+NSYNMAX
+
+!---------------------
+!  TRANSPEPTIDASES:
+
+   XW(JW+1:JW+NSYN)=XTPASE(1,1:NSYN)
+   YW(JW+1:JW+NSYN)=YTPASE(1,1:NSYN)
+   ZW(JW+1:JW+NSYN)=ZTPASE(1,1:NSYN)
+
+   XW(JW+NSYN:JW+NSYNMAX)=XW(JW+NSYN)
+   YW(JW+NSYN:JW+NSYNMAX)=YW(JW+NSYN)
+   ZW(JW+NSYN:JW+NSYNMAX)=ZW(JW+NSYN)
+
+   JW=JW+NSYNMAX
+
+   XW(JW+1:JW+NSYN)=XTPASE(2,1:NSYN)
+   YW(JW+1:JW+NSYN)=YTPASE(2,1:NSYN)
+   ZW(JW+1:JW+NSYN)=ZTPASE(2,1:NSYN)
+
+   XW(JW+NSYN:JW+NSYNMAX)=XW(JW+NSYN)
+   YW(JW+NSYN:JW+NSYNMAX)=YW(JW+NSYN)
+   ZW(JW+NSYN:JW+NSYNMAX)=ZW(JW+NSYN)
+
+   JW=JW+NSYNMAX
+
+   XW(JW+1:JW+NSYN)=XTPASE(3,1:NSYN)
+   YW(JW+1:JW+NSYN)=YTPASE(3,1:NSYN)
+   ZW(JW+1:JW+NSYN)=ZTPASE(3,1:NSYN)
+
+   XW(JW+NSYN:JW+NSYNMAX)=XW(JW+NSYN)
+   YW(JW+NSYN:JW+NSYNMAX)=YW(JW+NSYN)
+   ZW(JW+NSYN:JW+NSYNMAX)=ZW(JW+NSYN)
+
+   JW=JW+NSYNMAX
+
+!---------------------
+!  ENDOPEPTIDASES:
+
+   XW(JW+1:JW+NSYN)=XEDASE(1:NSYN)
+   YW(JW+1:JW+NSYN)=YEDASE(1:NSYN)
+   ZW(JW+1:JW+NSYN)=ZEDASE(1:NSYN)
+
+   XW(JW+NSYN:JW+NSYNMAX)=XW(JW+NSYN)
+   YW(JW+NSYN:JW+NSYNMAX)=YW(JW+NSYN)
+   ZW(JW+NSYN:JW+NSYNMAX)=ZW(JW+NSYN)
+
+   JW=JW+NSYNMAX
+
+!---------------------
+!  CROSSLINKING DONORS:
+
+   XW(JW+1:NTOTAL)=0.0
+   YW(JW+1:NTOTAL)=0.0
+   ZW(JW+1:NTOTAL)=0.0
+
+   DO NS=1,NSYN
+
+      IF(TPPEP(1,1,NS)>0)THEN
+
+         XW(JW+1)=XTPASE(1,NS)
+         YW(JW+1)=YTPASE(1,NS)
+         ZW(JW+1)=ZTPASE(1,NS)
+
+         XW(JW+2)=X(TPPEP(1,1,NS))
+         YW(JW+2)=Y(TPPEP(1,1,NS))
+         ZW(JW+2)=Z(TPPEP(1,1,NS))
+
+         JW=JW+2
+
+      END IF
+
+      IF(TPPEP(1,2,NS)>0)THEN
+
+         XW(JW+1)=XTPASE(2,NS)
+         YW(JW+1)=YTPASE(2,NS)
+         ZW(JW+1)=ZTPASE(2,NS)
+
+         XW(JW+2)=X(TPPEP(1,2,NS))
+         YW(JW+2)=Y(TPPEP(1,2,NS))
+         ZW(JW+2)=Z(TPPEP(1,2,NS))
+
+         JW=JW+2
+
+      END IF
+
+      IF(TPPEP(1,3,NS)>0)THEN
+
+         XW(JW+1)=XTPASE(3,NS)
+         YW(JW+1)=YTPASE(3,NS)
+         ZW(JW+1)=ZTPASE(3,NS)
+
+         XW(JW+2)=X(TPPEP(1,3,NS))
+         YW(JW+2)=Y(TPPEP(1,3,NS))
+         ZW(JW+2)=Z(TPPEP(1,3,NS))
+
+         JW=JW+2
+
+      END IF
+
+   END DO
+
+!---------------------
+!  CROSSLINKING ACCEPTORS:
+
+   DO NS=1,NSYN
+
+      IF(TPPEP(2,1,NS)>0)THEN
+
+         XW(JW+1)=XTPASE(1,NS)
+         YW(JW+1)=YTPASE(1,NS)
+         ZW(JW+1)=ZTPASE(1,NS)
+
+         XW(JW+2)=X(TPPEP(2,1,NS))
+         YW(JW+2)=Y(TPPEP(2,1,NS))
+         ZW(JW+2)=Z(TPPEP(2,1,NS))
+
+         JW=JW+2
+
+      END IF
+
+      IF(TPPEP(2,2,NS)>0)THEN
+
+         XW(JW+1)=XTPASE(2,NS)
+         YW(JW+1)=YTPASE(2,NS)
+         ZW(JW+1)=ZTPASE(2,NS)
+
+         XW(JW+2)=X(TPPEP(2,2,NS))
+         YW(JW+2)=Y(TPPEP(2,2,NS))
+         ZW(JW+2)=Z(TPPEP(2,2,NS))
+
+         JW=JW+2
+
+      END IF
+
+      IF(TPPEP(2,3,NS)>0)THEN
+
+         XW(JW+1)=XTPASE(3,NS)
+         YW(JW+1)=YTPASE(3,NS)
+         ZW(JW+1)=ZTPASE(3,NS)
+
+         XW(JW+2)=X(TPPEP(2,3,NS))
+         YW(JW+2)=Y(TPPEP(2,3,NS))
+         ZW(JW+2)=Z(TPPEP(2,3,NS))
+
+         JW=JW+2
+
+      END IF
+
+   END DO
+
+   JW=NTOTAL-6*NSYNMAX
+
+!---------------------
+
+!  CLEAVING PEPTIDE BONDS:
+
+   DO NS=1,NSYN
+
+      IF(EDHOLD(1,NS)>0)THEN
+         XW(JW+1)=X(EDHOLD(1,NS))
+         YW(JW+1)=Y(EDHOLD(1,NS))
+         ZW(JW+1)=Z(EDHOLD(1,NS))
+
+         XW(JW+2)=X(EDHOLD(2,NS))
+         YW(JW+2)=Y(EDHOLD(2,NS))
+         ZW(JW+2)=Z(EDHOLD(2,NS))
+
+         JW=JW+2
+
+      END IF
+   END DO
+
+   JW=NTOTAL-4*NSYNMAX
+
+!---------------------
+
+!  EDASE IS HOLDING PEPTIDE:
+
+   DO NS=1,NSYN
+
+      IF(EDPEP(1,NS)>0.AND.EDPEP(1,NS)/=TPPEP(2,1,NS).AND.EDPEP(1,NS)/=TPPEP(2,2,NS).AND.EDPEP(1,NS)/=TPPEP(2,3,NS))THEN
+
+         XW(JW+1)=XEDASE(NS)
+         YW(JW+1)=YEDASE(NS)
+         ZW(JW+1)=ZEDASE(NS)
+
+         XW(JW+2)=X(EDPEP(1,NS))
+         YW(JW+2)=Y(EDPEP(1,NS))
+         ZW(JW+2)=Z(EDPEP(1,NS))
+
+         JW=JW+2
+
+      END IF
+
+      IF(EDPEP(2,NS)>0.AND.EDPEP(2,NS)/=TPPEP(2,1,NS).AND.EDPEP(2,NS)/=TPPEP(2,2,NS).AND.EDPEP(2,NS)/=TPPEP(2,3,NS))THEN
+
+         XW(JW+1)=XEDASE(NS)
+         YW(JW+1)=YEDASE(NS)
+         ZW(JW+1)=ZEDASE(NS)
+
+         XW(JW+2)=X(EDPEP(2,NS))
+         YW(JW+2)=Y(EDPEP(2,NS))
+         ZW(JW+2)=Z(EDPEP(2,NS))
+
+         JW=JW+2
+
+      END IF
+
+   END DO
+
+!---------------------
+
+   WRITE(JUNIT)XW(1:NTOTAL)
+   WRITE(JUNIT)YW(1:NTOTAL)
+   WRITE(JUNIT)ZW(1:NTOTAL)
+
+   DEALLOCATE(XW,YW,ZW)
+
+   END SUBROUTINE
+
+!========================================================================
+
+   SUBROUTINE VISUALPSF(GROWTH,NSTART,NATOMSTART,NATOMCAP,NBONDGLYSTART,NPG,PGID,PGLEN,PGTYP, &
+                        NSYNMAX,NTOTAL,NGLYNEW,NPEPTOTAL,BOND,BONDGLY)
+
+   IMPLICIT NONE
+
+   INTEGER,DIMENSION(:,:),ALLOCATABLE::PGID,BOND,BONDGLY
+   INTEGER,DIMENSION(:),ALLOCATABLE::PGLEN,PGTYP
+   INTEGER NSTART,NATOMSTART,NBONDGLYSTART,NPG,NSYNMAX,NPEPTOTAL,NGLYTOTAL
+   INTEGER NATOMNEW,NTOTAL,NGLYNEW,NATOMCAP
+   INTEGER IPG,N,J,I,JATOM,NLINE,NBOND
+   INTEGER J1,J2,J3,J4,J5,J6,J7,J8
+   CHARACTER(8)TEX,TYP,RES,SEGID,RESNO,ATOM
+   DOUBLE PRECISION CHARG,MASS,W1,W2,GROWTH
+
+   NATOMNEW=(NATOMSTART-NATOMCAP)*GROWTH+100
+   NGLYNEW=NATOMNEW
+   NGLYTOTAL=NBONDGLYSTART+NGLYNEW
+   NPEPTOTAL=NATOMSTART+NATOMNEW
+   NTOTAL=NATOMSTART+2*NGLYNEW+2*NPEPTOTAL+6*NSYNMAX+ 12*NSYNMAX+  2*NSYNMAX    +4*NSYNMAX
+!             |           |          |          |         |          |            |
+!             |           |          |          |         |          |            |
+!           OLD PG    new PG     pep bonds     PBPs    crlking    cleaving      EDASE-holding
+
+   NBOND=NGLYTOTAL+NPEPTOTAL+ 6*NSYNMAX  + NSYNMAX   + 2*NSYNMAX
+!            |         |         |           |           |
+!            |         |         |           |           |
+!       gly-bonds pep-bonds   crlking     cleaving  EDASE-holding
+
+!  EACH NEW GLYCAN BOND IS VISUALIZED WITH 2 BEADS
+!  EACH PEPTIDE BOND IS VISUALIZED WITH 2 BEADS
+!  EACH PBP IS VISUALIZED WITH A BEAD
+!  A CROSSLINKING EVENT IS VISUALIZED WITH 2 BEADS
+!  A CLEAVING EVENT IS VISUALIZED WITH 2 BEADS
+!  EDASE HOLDING A PEPTISE IS VISUALIZED WITH 2 BEADS
+
+   IF(NSTART/=0)THEN
+      RETURN
+   END IF
+
+   OPEN(1,FILE='visual.psf')
+
+20  FORMAT(I8,1X,A4,1X,A4,1X,A3,2X,A3,2X,A4,2X,F9.6,6X,F8.4,11X,I1)
+21  FORMAT(I8,1X,A)
+
+   ALLOCATE(BOND(2,NBOND))
+
+
+   WRITE(1,21)NTOTAL,'!NATOM'
+
+!-- FIRST, GLYCAN UNITS:
+   RES='GLY'
+
+   ATOM='ATOM'
+   CHARG=0.0
+   MASS=1.0
+   TYP='GLY'
+
+   IPG=1
+   WRITE(RESNO,'(I1)')IPG
+
+   JATOM=0
+
+   DO N=1,NPG
+
+      IF(PGTYP(N)==0)THEN
+         SEGID='CAP'
+      ELSE
+         SEGID='OLD'
+      END IF
+
+      DO J=1,PGLEN(N)
+
+         JATOM=JATOM+1
+
+         WRITE(1,20)JATOM,SEGID,RESNO,RES,TYP,ATOM,CHARG,MASS,0
+
+      END DO
+
+   ENDDO
+
+   NBOND=NBONDGLYSTART
+
+   BOND(1,1:NBOND)=BONDGLY(1,1:NBOND)
+   BOND(2,1:NBOND)=BONDGLY(2,1:NBOND)
+
+
+   SEGID='NEW'
+
+   DO N=1,NGLYNEW
+
+      JATOM=JATOM+1
+      WRITE(1,20)JATOM,SEGID,RESNO,RES,TYP,ATOM,CHARG,MASS,0
+
+      JATOM=JATOM+1
+      WRITE(1,20)JATOM,SEGID,RESNO,RES,TYP,ATOM,CHARG,MASS,0
+
+      NBOND=NBOND+1
+
+      BOND(1,NBOND)=JATOM-1
+      BOND(2,NBOND)=JATOM
+
+   END DO
+
+! - LIST OF PEPTIDE CROSS-LINKS:
+
+   RES='PEP'
+   SEGID='PEP'
+   TYP='PEP'
+
+   IPG=2
+   WRITE(RESNO,'(I1)')IPG
+
+   DO N=1,NPEPTOTAL
+
+      JATOM=JATOM+1
+
+      WRITE(1,20)JATOM,SEGID,RESNO,RES,TYP,ATOM,CHARG,MASS,0
+
+      JATOM=JATOM+1
+
+      WRITE(1,20)JATOM,SEGID,RESNO,RES,TYP,ATOM,CHARG,MASS,0
+
+      NBOND=NBOND+1
+      BOND(1,NBOND)=JATOM-1
+      BOND(2,NBOND)=JATOM
+
+   END DO
+
+!- LIST OF PBPS:
+
+   RES='PBP'
+   SEGID='GT1'
+   TYP='PBP'
+
+   IPG=3
+   WRITE(RESNO,'(I1)')IPG
+
+   DO N=1,NSYNMAX
+
+      JATOM=JATOM+1
+
+      WRITE(1,20)JATOM,SEGID,RESNO,RES,TYP,ATOM,CHARG,MASS,0
+
+   END DO
+
+   SEGID='GT2'
+
+   DO N=1,NSYNMAX
+
+      JATOM=JATOM+1
+
+      WRITE(1,20)JATOM,SEGID,RESNO,RES,TYP,ATOM,CHARG,MASS,0
+
+   END DO
+
+   SEGID='TP1'
+
+   IPG=4
+   WRITE(RESNO,'(I1)')IPG
+
+   DO N=1,NSYNMAX
+
+      JATOM=JATOM+1
+
+      WRITE(1,20)JATOM,SEGID,RESNO,RES,TYP,ATOM,CHARG,MASS,0
+
+   END DO
+
+   SEGID='TP2'
+
+   DO N=1,NSYNMAX
+
+      JATOM=JATOM+1
+
+      WRITE(1,20)JATOM,SEGID,RESNO,RES,TYP,ATOM,CHARG,MASS,0
+
+   END DO
+
+   SEGID='TP3'
+
+   DO N=1,NSYNMAX
+
+      JATOM=JATOM+1
+
+      WRITE(1,20)JATOM,SEGID,RESNO,RES,TYP,ATOM,CHARG,MASS,0
+
+   END DO
+
+   SEGID='EDA'
+
+   IPG=5
+   WRITE(RESNO,'(I1)')IPG
+
+   DO N=1,NSYNMAX
+
+      JATOM=JATOM+1
+
+      WRITE(1,20)JATOM,SEGID,RESNO,RES,TYP,ATOM,CHARG,MASS,0
+
+   END DO
+
+!  LIST OF PBP CROSSLINKING:
+
+   RES='CRL'
+   SEGID='CRL'
+   TYP='CRL'
+
+   IPG=6
+   WRITE(RESNO,'(I1)')IPG
+
+   DO N=1,6*NSYNMAX
+
+      JATOM=JATOM+1
+
+      WRITE(1,20)JATOM,SEGID,RESNO,RES,TYP,ATOM,CHARG,MASS,0
+
+      JATOM=JATOM+1
+
+      WRITE(1,20)JATOM,SEGID,RESNO,RES,TYP,ATOM,CHARG,MASS,0
+
+      NBOND=NBOND+1
+      BOND(1,NBOND)=JATOM-1
+      BOND(2,NBOND)=JATOM
+
+   END DO
+
+!  LIST OF DELETED PEP-BONDS:
+
+   RES='DEL'
+   SEGID='DEL'
+   TYP='DEL'
+
+   IPG=7
+   WRITE(RESNO,'(I1)')IPG
+
+   DO N=1,NSYNMAX
+
+      JATOM=JATOM+1
+
+      WRITE(1,20)JATOM,SEGID,RESNO,RES,TYP,ATOM,CHARG,MASS,0
+
+      JATOM=JATOM+1
+
+      WRITE(1,20)JATOM,SEGID,RESNO,RES,TYP,ATOM,CHARG,MASS,0
+
+      NBOND=NBOND+1
+      BOND(1,NBOND)=JATOM-1
+      BOND(2,NBOND)=JATOM
+
+   END DO
+
+!  EDASE HOLDING PEPTIDES:
+
+   RES='HOD'
+   SEGID='HOD'
+   TYP='HOD'
+
+   IPG=8
+   WRITE(RESNO,'(I1)')IPG
+
+   DO N=1,NSYNMAX
+
+      JATOM=JATOM+1
+
+      WRITE(1,20)JATOM,SEGID,RESNO,RES,TYP,ATOM,CHARG,MASS,0
+
+      JATOM=JATOM+1
+
+      WRITE(1,20)JATOM,SEGID,RESNO,RES,TYP,ATOM,CHARG,MASS,0
+
+      NBOND=NBOND+1
+      BOND(1,NBOND)=JATOM-1
+      BOND(2,NBOND)=JATOM
+
+      JATOM=JATOM+1
+
+      WRITE(1,20)JATOM,SEGID,RESNO,RES,TYP,ATOM,CHARG,MASS,0
+
+      JATOM=JATOM+1
+
+      WRITE(1,20)JATOM,SEGID,RESNO,RES,TYP,ATOM,CHARG,MASS,0
+
+      NBOND=NBOND+1
+      BOND(1,NBOND)=JATOM-1
+      BOND(2,NBOND)=JATOM
+
+   END DO
+
+!-------------------------------------------
+! -- WRITE LIST OF BONDS:
+
+   NLINE=NBOND/4
+
+   WRITE(1,*)
+   WRITE(1,21)NBOND,'!NBOND: bonds'
+
+   DO N=1,NLINE
+      I=1+4*(N-1)
+      J1=BOND(1,I); J2=BOND(2,I); J3=BOND(1,I+1); J4=BOND(2,I+1)
+      J5=BOND(1,I+2); J6=BOND(2,I+2); J7=BOND(1,I+3); J8=BOND(2,I+3)
+
+      WRITE(1,'(8I8)')J1,J2,J3,J4,J5,J6,J7,J8
+   END DO
+
+   IF(MOD(NBOND,4)==1)THEN
+      J1=BOND(1,NBOND); J2=BOND(2,NBOND)
+      WRITE(1,'(2I8)')J1,J2
+
+   ELSE IF(MOD(NBOND,4)==2)THEN
+      J1=BOND(1,NBOND-1); J2=BOND(2,NBOND-1)
+      J3=BOND(1,NBOND); J4=BOND(2,NBOND)
+      WRITE(1,'(4I8)')J1,J2,J3,J4
+
+   ELSE IF(MOD(NBOND,4)==3)THEN
+      J1=BOND(1,NBOND-2); J2=BOND(2,NBOND-2)
+      J3=BOND(1,NBOND-1); J4=BOND(2,NBOND-1)
+      J5=BOND(1,NBOND); J6=BOND(2,NBOND)
+      WRITE(1,'(6I8)')J1,J2,J3,J4,J5,J6
+
+   END IF
+
+   CLOSE(1)
+
+   END SUBROUTINE
+
+
+!==============================================================================
+
+   SUBROUTINE SETNEIBOND(NS,NBONDGLY,NBONDPEP,BONDGLY,BONDPEP,BONTYP,X,Y,Z,XGTASE,YGTASE,ZGTASE, &
+                         NEIBOND,NEINUM,NEIGLY,GLYNUM)
+
+   IMPLICIT NONE
+
+   INTEGER NBONDGLY,NBONDPEP,NS,N,N1,N2,LENGTH,NP
+   INTEGER, ALLOCATABLE, DIMENSION(:,:)::BONDGLY,BONDPEP
+   INTEGER, ALLOCATABLE, DIMENSION(:)::BONTYP,NEINUM,GLYNUM
+   INTEGER, ALLOCATABLE, DIMENSION(:,:,:)::NEIBOND,NEIGLY
+   DOUBLE PRECISION DIST2,XBOND,YBOND,ZBOND
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:)::X,Y,Z
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:,:)::XGTASE,YGTASE,ZGTASE
+
+   LENGTH=0
+
+   DO N=1,NBONDGLY
+
+      IF(LENGTH==50)THEN
+         PRINT*,'WARNING: COMPLEX',NS,'HAS MORE THAN 50 GLYCAN NEIGHBORS'
+         EXIT
+      END IF
+
+      N1=BONDGLY(1,N)
+      N2=BONDGLY(2,N)
+
+      XBOND=(X(N1)+X(N2))/2
+      YBOND=(Y(N1)+Y(N2))/2
+      ZBOND=(Z(N1)+Z(N2))/2
+
+      DIST2=(XGTASE(1,NS)-XBOND)**2+(YGTASE(1,NS)-YBOND)**2+(ZGTASE(1,NS)-ZBOND)**2
+
+      IF(DIST2<36.0D0)THEN
+         LENGTH=LENGTH+1
+
+         NEIBOND(1,LENGTH,NS)=N1
+         NEIBOND(2,LENGTH,NS)=N2
+
+         NEIGLY(1,LENGTH,NS)=N1
+         NEIGLY(2,LENGTH,NS)=N2
+
+      END IF
+   END DO
+
+   GLYNUM(NS)=LENGTH
+
+   NP=0
+
+   DO N=1,NBONDPEP
+
+      IF(LENGTH==100)THEN
+         PRINT*,'WARNING: COMPLEX',NS,'HAS MORE THAN 100 NEIGHBORS'
+         EXIT
+      END IF
+
+      IF(BONTYP(N)==0)THEN
+         CYCLE
+      END IF
+
+      N1=BONDPEP(1,N)
+      N2=BONDPEP(2,N)
+
+      XBOND=(X(N1)+X(N2))/2
+      YBOND=(Y(N1)+Y(N2))/2
+      ZBOND=(Z(N1)+Z(N2))/2
+
+      DIST2=(XGTASE(1,NS)-XBOND)**2+(YGTASE(1,NS)-YBOND)**2+(ZGTASE(1,NS)-ZBOND)**2
+
+      IF(DIST2<36.0D0)THEN
+         LENGTH=LENGTH+1
+
+         NEIBOND(1,LENGTH,NS)=N1
+         NEIBOND(2,LENGTH,NS)=N2
+
+         NP=NP+1
+
+      END IF
+   END DO
+
+   NEINUM(NS)=LENGTH
+
+
+   END SUBROUTINE
+
+!==============================================================================
+
+
+!=========================================================================
+
+   SUBROUTINE NEWCOOR(NATOM,X,Y,Z,FX,FY,FZ,NSYN,XGTASE,YGTASE,ZGTASE,XTPASE,YTPASE,ZTPASE,XEDASE,YEDASE,ZEDASE, &
+                   XEDASEOLD,YEDASEOLD,ZEDASEOLD,FXGTASE,FYGTASE,FZGTASE,FXTPASE,FYTPASE,FZTPASE, &
+                   FXEDASE,FYEDASE,FZEDASE,INVMPBP,GAM,GMODE)
+
+   IMPLICIT NONE
+
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:)::X,Y,Z,FX,FY,FZ,XEDASEOLD,YEDASEOLD,ZEDASEOLD
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:)::XEDASE,YEDASE,ZEDASE,FXEDASE,FYEDASE,FZEDASE
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:,:)::XGTASE,YGTASE,ZGTASE,FXGTASE,FYGTASE,FZGTASE
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:,:)::FXTPASE,FYTPASE,FZTPASE,XTPASE,YTPASE,ZTPASE
+
+   DOUBLE PRECISION GAM,INVMPBP
+   INTEGER NATOM,NSYN,NS,GMODE
+
+   X(1:NATOM)=X(1:NATOM)+GAM*FX(1:NATOM)
+   Y(1:NATOM)=Y(1:NATOM)+GAM*FY(1:NATOM)
+   Z(1:NATOM)=Z(1:NATOM)+GAM*FZ(1:NATOM)
+
+   IF(GMODE>=12)THEN
+
+      DO NS=1,NSYN
+
+         XGTASE(1:2,NS)=XGTASE(1:2,NS)+GAM*FXGTASE(1:2,NS)*INVMPBP
+         YGTASE(1:2,NS)=YGTASE(1:2,NS)+GAM*FYGTASE(1:2,NS)*INVMPBP
+         ZGTASE(1:2,NS)=ZGTASE(1:2,NS)+GAM*FZGTASE(1:2,NS)*INVMPBP
+
+         XTPASE(1:3,NS)=XTPASE(1:3,NS)+GAM*FXTPASE(1:3,NS)*INVMPBP
+         YTPASE(1:3,NS)=YTPASE(1:3,NS)+GAM*FYTPASE(1:3,NS)*INVMPBP
+         ZTPASE(1:3,NS)=ZTPASE(1:3,NS)+GAM*FZTPASE(1:3,NS)*INVMPBP
+
+      ENDDO
+
+   ELSEIF(GMODE>=7)THEN
+
+      DO NS=1,NSYN
+
+         XGTASE(1,NS)=XGTASE(1,NS)+GAM*FXGTASE(1,NS)*INVMPBP
+         YGTASE(1,NS)=YGTASE(1,NS)+GAM*FYGTASE(1,NS)*INVMPBP
+         ZGTASE(1,NS)=ZGTASE(1,NS)+GAM*FZGTASE(1,NS)*INVMPBP
+
+         XGTASE(2,NS)=XGTASE(1,NS)
+         YGTASE(2,NS)=YGTASE(1,NS)
+         ZGTASE(2,NS)=ZGTASE(1,NS)
+
+         XTPASE(1:2,NS)=XTPASE(1:2,NS)+GAM*FXTPASE(1:2,NS)*INVMPBP
+         YTPASE(1:2,NS)=YTPASE(1:2,NS)+GAM*FYTPASE(1:2,NS)*INVMPBP
+         ZTPASE(1:2,NS)=ZTPASE(1:2,NS)+GAM*FZTPASE(1:2,NS)*INVMPBP
+
+         XTPASE(3,NS)=XTPASE(1,NS)
+         YTPASE(3,NS)=YTPASE(1,NS)
+         ZTPASE(3,NS)=ZTPASE(1,NS)
+
+      ENDDO
+
+   ELSE
+
+      DO NS=1,NSYN
+
+         XGTASE(1,NS)=XGTASE(1,NS)+GAM*FXGTASE(1,NS)*INVMPBP
+         YGTASE(1,NS)=YGTASE(1,NS)+GAM*FYGTASE(1,NS)*INVMPBP
+         ZGTASE(1,NS)=ZGTASE(1,NS)+GAM*FZGTASE(1,NS)*INVMPBP
+   
+         XGTASE(2,NS)=XGTASE(1,NS)
+         YGTASE(2,NS)=YGTASE(1,NS)
+         ZGTASE(2,NS)=ZGTASE(1,NS)
+
+         XTPASE(1,NS)=XTPASE(1,NS)+GAM*FXTPASE(1,NS)*INVMPBP
+         YTPASE(1,NS)=YTPASE(1,NS)+GAM*FYTPASE(1,NS)*INVMPBP
+         ZTPASE(1,NS)=ZTPASE(1,NS)+GAM*FZTPASE(1,NS)*INVMPBP
+
+         XTPASE(2:3,NS)=XTPASE(1,NS)
+         YTPASE(2:3,NS)=YTPASE(1,NS)
+         ZTPASE(2:3,NS)=ZTPASE(1,NS)
+
+      ENDDO
+
+   END IF
+
+   XEDASEOLD(1:NSYN)=XEDASE(1:NSYN)
+   YEDASEOLD(1:NSYN)=YEDASE(1:NSYN)
+   ZEDASEOLD(1:NSYN)=ZEDASE(1:NSYN)
+
+   XEDASE(1:NSYN)=XEDASE(1:NSYN)+GAM*FXEDASE(1:NSYN)*INVMPBP
+   YEDASE(1:NSYN)=YEDASE(1:NSYN)+GAM*FYEDASE(1:NSYN)*INVMPBP
+   ZEDASE(1:NSYN)=ZEDASE(1:NSYN)+GAM*FZEDASE(1:NSYN)*INVMPBP
+
+
+   END SUBROUTINE
+
+!==================================================================
+
+   SUBROUTINE PG_OUT(NSTART,NATOM,NATOMDEL,OLDNATOMDEL,NATOMCAP,NATOMSTART,DNOR,ATOR,PEPDIR,X,Y,Z,PGCAP1,PGCAP2,ORAD, &
+                 NPG,NPGSTART,PGID,PGLEN,PGTYP,PGDIR,NBONDGLY,NBONDGLYSTART,NBONDPEP,NBONDDEL, &
+                 BONDGLY,BONDPEP,BONTYP,NLOOP,NLOOPDEL,LOOP,LOOPLEN,LOOPTYP, &
+                 NSYN,SYNDIR,SYNTHESIS,GTLOAD,SYNPG,SYNLOOP,GLYTIP,GLYSEC,TPPEP,EDPEP, &
+                 GTATRANS,JDEACT,SIGCROSS,SIGCLEAVE,EDLOCKIN,EDCAP,EDHOLD,CRLKAGE,SYNRATIO, &
+                 XGTASE,YGTASE,ZGTASE,XTPASE,YTPASE,ZTPASE,XEDASE,YEDASE,ZEDASE,XEDASEOLD,YEDASEOLD,ZEDASEOLD)
+
+
+   IMPLICIT NONE
+
+   INTEGER NATOM,NSYN,NATOMDEL,OLDNATOMDEL,NPG
+   INTEGER NBONDGLY,NBONDGLYSTART,NBONDPEP,NBONDDEL
+   INTEGER NLOOP,NATOMSTART,NPGSTART,NLOOPDEL
+   INTEGER N,N0,I,J,K,IPG,PGLENMAX,LOOPLENMAX
+   INTEGER NSTART,SYNRATIO,NATOMCAP,PGCAP1,PGCAP2
+
+   INTEGER,DIMENSION(:,:),ALLOCATABLE::PGID,BONDGLY,BONDPEP,LOOP,SYNTHESIS,GTLOAD,SYNPG,GLYTIP,GLYSEC
+   INTEGER,DIMENSION(:),ALLOCATABLE::PGLEN,PGTYP,PGDIR,BONTYP,DNOR,ATOR,PEPDIR
+   INTEGER,DIMENSION(:,:),ALLOCATABLE::GTATRANS,SIGCROSS,EDHOLD,CRLKAGE,EDPEP
+   INTEGER,DIMENSION(:),ALLOCATABLE::LOOPLEN,LOOPTYP,SYNDIR,SYNLOOP,JDEACT,SIGCLEAVE,EDLOCKIN,EDCAP
+   INTEGER,DIMENSION(:,:,:),ALLOCATABLE::TPPEP
+
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: X,Y,Z,XEDASE,YEDASE,ZEDASE,XEDASEOLD,YEDASEOLD,ZEDASEOLD
+   DOUBLE PRECISION,DIMENSION(:,:),ALLOCATABLE:: XTPASE,YTPASE,ZTPASE,XGTASE,YGTASE,ZGTASE
+   DOUBLE PRECISION ORAD
+
+   CHARACTER CHARA*512
+   CHARACTER (LEN=64) FILECOOR,FILECONFIG
+   CHARACTER ZERO*1,CHARID1*1,CHARID2*2,CHARID3*3,CHARID4*4
+
+   NSTART=NSTART+1
+
+   WRITE(ZERO,'(I1)')0
+
+   IF(NSTART<10)THEN
+      WRITE(CHARID1,'(I1)')NSTART
+      FILECOOR='coor'//ZERO//ZERO//ZERO//CHARID1//'.inp'
+      FILECONFIG='config'//ZERO//ZERO//ZERO//CHARID1//'.inp'
+   ELSE IF(NSTART<100)THEN
+      WRITE(CHARID2,'(I2)')NSTART
+      FILECOOR='coor'//ZERO//ZERO//CHARID2//'.inp'
+      FILECONFIG='config'//ZERO//ZERO//CHARID2//'.inp'
+   ELSE IF(NSTART<1000)THEN
+      WRITE(CHARID3,'(I3)')NSTART
+      FILECOOR='coor'//ZERO//CHARID3//'.inp'
+      FILECONFIG='config'//ZERO//CHARID3//'.inp'
+   ELSE IF(NSTART<10000)THEN
+      WRITE(CHARID4,'(I4)')NSTART
+      FILECOOR='coor'//CHARID4//'.inp'
+      FILECONFIG='config'//CHARID4//'.inp'
+   ELSE
+      PRINT*,'NSTART IS TOO BIG! STOP NOW.'
+      STOP
+   END IF
+
+!  ----------------------------------------------
+   OPEN(1,FILE=FILECOOR,FORM='UNFORMATTED')
+
+   WRITE(1)NATOM
+
+   WRITE(1)X(1:NATOM)
+   WRITE(1)Y(1:NATOM)
+   WRITE(1)Z(1:NATOM)
+
+   WRITE(1)NSYN
+
+   WRITE(1)XGTASE(1,1:NSYN),XGTASE(2,1:NSYN),XTPASE(1,1:NSYN),XTPASE(2,1:NSYN),XTPASE(3,1:NSYN),XEDASE(1:NSYN),XEDASEOLD(1:NSYN)
+   WRITE(1)YGTASE(1,1:NSYN),YGTASE(2,1:NSYN),YTPASE(1,1:NSYN),YTPASE(2,1:NSYN),YTPASE(3,1:NSYN),YEDASE(1:NSYN),YEDASEOLD(1:NSYN)
+   WRITE(1)ZGTASE(1,1:NSYN),ZGTASE(2,1:NSYN),ZTPASE(1,1:NSYN),ZTPASE(2,1:NSYN),ZTPASE(3,1:NSYN),ZEDASE(1:NSYN),ZEDASEOLD(1:NSYN)
+
+   CLOSE(1)
+
+!  ----------------------------------------------
+
+   OPEN(1,FILE=FILECONFIG)
+
+   WRITE(1,*)'ATOM INPUT'
+
+   WRITE(1,*)NATOMSTART,NATOM,NATOMDEL,OLDNATOMDEL
+   WRITE(1,*)DNOR(1:NATOM)
+   WRITE(1,*)ATOR(1:NATOM)
+   WRITE(1,*)PEPDIR(1:NATOM)
+   WRITE(1,*)
+
+!  ----------------------------------------------
+
+   WRITE(1,*)'RESIDUE INPUT'
+
+   PGLENMAX=MAXVAL(PGLEN(1:NPG))
+
+   WRITE(1,*)NPGSTART,NPG,PGLENMAX
+
+   DO I=1,NPG
+      WRITE(1,*)PGLEN(I),PGTYP(I),PGDIR(I),PGID(1:PGLEN(I),I)
+   END DO
+   WRITE(1,*)
+
+!  ----------------------------------------------
+
+   WRITE(1,*)'BONDGLY INPUT'
+   WRITE(1,*)NBONDGLYSTART,NBONDGLY
+
+10   FORMAT(I6,4X,I6,4X,I6)
+
+   DO N=1,NBONDGLY
+      WRITE(1,10)N,BONDGLY(1,N),BONDGLY(2,N)
+   END DO
+   WRITE(1,*)
+
+!  ----------------------------------------------
+
+   WRITE(1,*)'BONDPEP INPUT'
+
+   WRITE(1,*)NBONDPEP,NBONDDEL
+
+11   FORMAT(I6,4X,I1,4X,I6,4X,I6)
+
+   DO N=1,NBONDPEP
+      WRITE(1,11)N,BONTYP(N),BONDPEP(1,N),BONDPEP(2,N)
+   END DO
+   WRITE(1,*)
+
+!  ----------------------------------------------
+
+   WRITE(1,*)'LOOP INPUT'
+
+   LOOPLENMAX=MAXVAL(LOOPLEN(1:NLOOP))
+
+   WRITE(1,*)NLOOP,LOOPLENMAX,NLOOPDEL
+
+   DO N=1,NLOOP
+      WRITE(1,*)LOOPLEN(N),LOOPTYP(N),LOOP(1:LOOPLEN(N),N)
+   END DO
+   WRITE(1,*)
+
+!  ----------------------------------------------
+
+   WRITE(1,*)'CAPS INPUT'
+
+   WRITE(1,*)NATOMCAP,PGCAP1,PGCAP2
+   WRITE(1,*)
+
+   WRITE(1,*)'ORIGINAL RADIUS'
+   WRITE(1,*)ORAD
+
+
+!  ----------------------------------------------
+
+   WRITE(1,*)'SYNCOMP INPUT'
+
+      WRITE(1,*)NSYN,SYNRATIO   ! THIS ARE # OF SYNTHESIS COMPLEXES AND THE ATOM/SYNTHESIS RATIO
+
+      WRITE(1,*)'SYNDIR(1:NSYN)'
+      WRITE(1,*)SYNDIR(1:NSYN)
+
+      WRITE(1,*)'SYNTHESIS(1,1:NSYN),SYNTHESIS(2,1:NSYN)'
+      WRITE(1,*)SYNTHESIS(1,1:NSYN),SYNTHESIS(2,1:NSYN)
+
+      WRITE(1,*)'GTLOAD(1,1:NSYN),GTLOAD(2,1:NSYN)'
+      WRITE(1,*)GTLOAD(1,1:NSYN),GTLOAD(2,1:NSYN)
+
+      WRITE(1,*)'SYNPG(1,1:NSYN),SYNPG(2,1:NSYN)'
+      WRITE(1,*)SYNPG(1,1:NSYN),SYNPG(2,1:NSYN)
+
+      WRITE(1,*)'SYNLOOP(1:NSYN)'
+      WRITE(1,*)SYNLOOP(1:NSYN)
+
+      WRITE(1,*)'GLYTIP(1,1:NSYN),GLYTIP(2,1:NSYN)'
+      WRITE(1,*)GLYTIP(1,1:NSYN),GLYTIP(2,1:NSYN)
+
+      WRITE(1,*)'GLYSEC(1,1:NSYN),GLYSEC(2,1:NSYN)'
+      WRITE(1,*)GLYSEC(1,1:NSYN),GLYSEC(2,1:NSYN)
+
+      WRITE(1,*)'TPPEP(1,1,1:NSYN),TPPEP(1,2,1:NSYN),TPPEP(1,3,1:NSYN)'
+      WRITE(1,*)TPPEP(1,1,1:NSYN),TPPEP(1,2,1:NSYN),TPPEP(1,3,1:NSYN)
+
+      WRITE(1,*)'TPPEP(2,1,1:NSYN),TPPEP(2,2,1:NSYN),TPPEP(2,3,1:NSYN)'
+      WRITE(1,*)TPPEP(2,1,1:NSYN),TPPEP(2,2,1:NSYN),TPPEP(2,3,1:NSYN)
+
+
+      WRITE(1,*)'EDPEP(1,1:NSYN),EDPEP(2,1:NSYN)'
+      WRITE(1,*)EDPEP(1,1:NSYN),EDPEP(2,1:NSYN)
+
+      WRITE(1,*)'GTATRANS(1,1:NSYN),GTATRANS(2,1:NSYN)'
+      WRITE(1,*)GTATRANS(1,1:NSYN),GTATRANS(2,1:NSYN)
+
+      WRITE(1,*)'JDEACT(1:NSYN)'
+      WRITE(1,*)JDEACT(1:NSYN)
+
+      WRITE(1,*)'SIGCROSS(1,1:NSYN),SIGCROSS(2,1:NSYN),SIGCROSS(3,1:NSYN)'
+      WRITE(1,*)SIGCROSS(1,1:NSYN),SIGCROSS(2,1:NSYN),SIGCROSS(3,1:NSYN)
+
+      WRITE(1,*)'SIGCLEAVE(1:NSYN)'
+      WRITE(1,*)SIGCLEAVE(1:NSYN)
+
+      WRITE(1,*)'EDLOCKIN(1:NSYN)'
+      WRITE(1,*)EDLOCKIN(1:NSYN)
+
+      WRITE(1,*)'EDCAP(1:NSYN)'
+      WRITE(1,*)EDCAP(1:NSYN)
+
+      WRITE(1,*)'EDHOLD(1,1:NSYN),EDHOLD(2,1:NSYN),EDHOLD(3,1:NSYN)'
+      WRITE(1,*)EDHOLD(1,1:NSYN),EDHOLD(2,1:NSYN),EDHOLD(3,1:NSYN)
+
+      WRITE(1,*)'CRLKAGE(1,1:NSYN),CRLKAGE(2,1:NSYN)'
+      WRITE(1,*)CRLKAGE(1,1:NSYN),CRLKAGE(2,1:NSYN)
+
+   CLOSE(1)
+
+   END SUBROUTINE
+
+!==========================================
+
+ SUBROUTINE PGMOTHER(NATOMSTART,NATOM,NATOMDEL,OLDNATOMDEL,DNOR,ATOR,PEPDIR,X,Y,Z, &
+                 NPG,PGID,PGLEN,PGTYP,PGDIR, &
+                 NBONDGLY,NBONDPEP,NBONDDEL,BONDGLY,BONDPEP,BONTYP, &
+                 NLOOP,NLOOPDEL,LOOP,LOOPLEN,LOOPTYP,NSIZE,ORAD)
+
+   IMPLICIT NONE
+
+   INTEGER NATOMSTART,NATOM,NSYN,NATOMDEL,OLDNATOMDEL
+   INTEGER NPG,NBONDGLYSTART
+   INTEGER NBONDGLY,NBONDPEP,NBONDDEL
+   INTEGER NLOOP,NPGSTART,NLOOPDEL
+   INTEGER N,N0,I,J,K,PGLENMAX,LOOPLENMAX
+   INTEGER NSTART,SYNRATIO,NATOMCAP,PGCAP1,PGCAP2,NSIZE
+
+   INTEGER,DIMENSION(:,:),ALLOCATABLE::PGID
+   INTEGER,DIMENSION(:),ALLOCATABLE::PGLEN,PGTYP,PGDIR
+   INTEGER,DIMENSION(:,:),ALLOCATABLE::BONDGLY,BONDPEP
+   INTEGER,DIMENSION(:),ALLOCATABLE::BONTYP,DNOR,ATOR,PEPDIR
+   INTEGER,DIMENSION(:,:),ALLOCATABLE::LOOP
+   INTEGER,DIMENSION(:),ALLOCATABLE::LOOPLEN,LOOPTYP
+
+   DOUBLE PRECISION, PARAMETER :: pi = 3.141592653589793239
+   DOUBLE PRECISION XCAP1,XCAP2,ORAD
+
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: X,Y,Z
+
+   CHARACTER CHARA*512
+
+   OPEN(1,FILE='coormother.inp',FORM='UNFORMATTED')
+
+
+   READ(1)NATOM
+
+   READ(1)X(1:NATOM)
+   READ(1)Y(1:NATOM)
+   READ(1)Z(1:NATOM)
+
+
+   CLOSE(1)
+
+!-------------------------------------------------------
+   OPEN(1,FILE='configmother.inp')
+
+
+42 READ(1,*)CHARA
+   IF(CHARA(1:4)/='ATOM')THEN
+      GOTO 42
+   END IF
+
+   READ(1,*)NATOMSTART,NATOM,NATOMDEL,OLDNATOMDEL
+
+   READ(1,*)DNOR(1:NATOM)
+   READ(1,*)ATOR(1:NATOM)
+   READ(1,*)PEPDIR(1:NATOM)
+
+!-----------------------------------------------
+
+2  READ(1,*)CHARA
+   IF(CHARA(1:4)/='RESI')THEN
+      GOTO 2
+   END IF
+
+   READ(1,*)NPGSTART,NPG,PGLENMAX
+
+   DO I=1,NPG
+      READ(1,*)PGLEN(I),PGTYP(I),PGDIR(I),PGID(1:PGLEN(I),I)
+   END DO
+
+!-----------------------------------------------
+31 READ(1,*)CHARA
+   IF(CHARA(1:7)/='BONDGLY')THEN
+      GOTO 31
+   END IF
+
+
+   READ(1,*)NBONDGLYSTART,NBONDGLY
+
+
+10   FORMAT(I6,4X,I6,4X,I6)
+
+   DO N=1,NBONDGLY
+      READ(1,10)N0,BONDGLY(1,N),BONDGLY(2,N)
+      IF(N/=N0)THEN
+         PRINT*,'BONDS READING ERROR!','N=',N,'N0=',N0
+         STOP
+      END IF
+   END DO
+
+!-----------------------------------------------
+
+32 READ(1,*)CHARA
+   IF(CHARA(1:7)/='BONDPEP')THEN
+      GOTO 32
+   END IF
+
+
+   READ(1,*)NBONDPEP,NBONDDEL
+
+
+11   FORMAT(I6,4X,I1,4X,I6,4X,I6)
+
+   DO N=1,NBONDPEP
+      READ(1,11)N0,BONTYP(N),BONDPEP(1,N),BONDPEP(2,N)
+      IF(N/=N0)THEN
+         PRINT*,'BONDS READING ERROR!','N=',N,'N0=',N0
+         STOP
+      END IF
+   END DO
+
+!-----------------------------------------------
+
+7  READ(1,*)CHARA
+   IF(CHARA(1:4)/='LOOP')THEN
+      GOTO 7
+   END IF
+
+   READ(1,*)NLOOP,LOOPLENMAX,NLOOPDEL
+
+   DO N=1,NLOOP
+
+      READ(1,*)LOOPLEN(N),LOOPTYP(N),(LOOP(I,N),I=1,LOOPLEN(N))
+
+   END DO
+
+!-----------------------------------------------
+
+!  INFORMATION OF THE CAPS:
+
+8  READ(1,*)CHARA
+   IF(CHARA(1:4)/='CAPS')THEN
+      GOTO 8
+   END IF
+
+   READ(1,*)NATOMCAP,PGCAP1,PGCAP2
+
+
+9  READ(1,*)CHARA
+   IF(CHARA(1:4)/='ORIG')THEN
+      GOTO 9
+   END IF
+
+   READ(1,*)ORAD
+
+   CLOSE(1)
+
+   NSIZE=NATOMSTART-NATOMCAP
+
+   END SUBROUTINE
+
+!====================================================================
+
+   SUBROUTINE LOOPBREAK(NPG,PGID,PGLEN,PGTYP,NATOM,DNOR,ATOR,NBONDPEP,NBONDDEL,BONDPEP,BONTYP, &
+                        NLOOP,NLOOPDEL,LOOP,LOOPLEN,LOOPTYP)
+
+   IMPLICIT NONE
+
+   INTEGER NPG,NBONDPEP,NBONDDEL,NLOOP,NLOOPDEL,NATOM,JCOUNT,NR,JR,NB,N1,N2,N1P,N2P,NGET,NRP
+   INTEGER NL,JL,NL1,NL2,JA1,JA2,J1,J2,LOLEN,J,JGET
+   INTEGER,DIMENSION(:,:),ALLOCATABLE::PGID,BONDPEP,LOOP
+   INTEGER,DIMENSION(:),ALLOCATABLE::PGLEN,PGTYP,BONTYP,DNOR,ATOR,LOOPLEN,LOOPTYP,MARK,PARTNER
+
+!  IF A STRAND IS CROSSLINKED TO ONLY ONE STRAND THEN BREAK CROSSLINKS
+
+   ALLOCATE(MARK(NATOM),PARTNER(NATOM))
+
+   MARK=0
+
+   DO NB=1,NBONDPEP
+
+      IF(BONTYP(NB)==0)THEN
+         CYCLE
+      END IF
+
+      MARK(BONDPEP(1:2,NB))=1
+
+      PARTNER(BONDPEP(1,NB))=BONDPEP(2,NB)
+      PARTNER(BONDPEP(2,NB))=BONDPEP(1,NB)
+
+
+   END DO
+
+   DO NR=1,NPG
+
+      IF(PGTYP(NR)==0)THEN
+         CYCLE
+      END IF
+
+      JCOUNT=0; N1=0; N2=0
+
+      DO JR=1,PGLEN(NR)
+
+         IF(MARK(PGID(JR,NR))==1)THEN
+            JCOUNT=JCOUNT+1
+            IF(N1==0)THEN
+               N1=PGID(JR,NR)
+            ELSEIF(N2==0)THEN
+               N2=PGID(JR,NR)
+            ENDIF
+         END IF
+
+      END DO
+
+!     JUST BREAK CROSSLINKS IF THERE ARE ONLY TWO CROSSLINKS ON STRAND:
+
+      IF(JCOUNT/=2)THEN
+         CYCLE
+      END IF
+
+      NGET=0
+
+      N1P=PARTNER(N1)
+
+      N2P=PARTNER(N2)
+
+      DO NRP=1,NPG
+
+         IF(NRP==NR)THEN
+            CYCLE
+         END IF
+
+         DO JR=1,PGLEN(NRP)
+
+            IF(PGID(JR,NRP)==N1P)THEN
+               NGET=NRP
+               EXIT
+            END IF
+
+         END DO
+
+         IF(NGET>0)THEN
+            EXIT
+         END IF
+
+      END DO
+
+      JGET=0
+
+      DO JR=1,PGLEN(NGET)
+
+         IF(PGID(JR,NGET)==N2P)THEN
+            JGET=1
+            EXIT
+         END IF
+
+      END DO
+
+!     CHECK IF THE STRAND HAS ONLY ONE STRAND PARTNER:
+
+      IF(JGET==0)THEN
+         CYCLE
+      END IF
+
+!     BREAK ONLY THE FIRST CROSSLINK:
+
+      DO NB=1,NBONDPEP
+
+         IF((BONDPEP(1,NB)==N1.OR.BONDPEP(1,NB)==N1P).AND.BONTYP(NB)/=0)THEN
+            BONTYP(NB)=0
+            NBONDDEL=NBONDDEL+1
+            DNOR(BONDPEP(1,NB))=-1
+            ATOR(BONDPEP(2,NB))=1
+            EXIT
+         END IF
+
+      END DO
+
+      NL1=0; NL2=0
+
+!     THEN MERGE TWO LOOPS:
+
+      DO NL=1,NLOOP
+
+         IF(LOOPTYP(NL)==0)THEN
+            CYCLE
+         END IF
+
+         DO JL=1,LOOPLEN(NL)
+
+            JA1=LOOP(JL,NL)
+
+            IF(JL==LOOPLEN(NL))THEN
+               JA2=LOOP(1,NL)
+            ELSE
+               JA2=LOOP(JL+1,NL)
+            END IF
+
+            IF(JA1==N1.AND.JA2==N1P)THEN
+               NL1=NL
+
+               IF(JL==LOOPLEN(NL))THEN
+                  J1=1
+               ELSE
+                  J1=JL+1
+               END IF
+
+               EXIT
+            END IF
+
+            IF(JA2==N1.AND.JA1==N1P)THEN
+               NL2=NL
+
+               IF(JL==LOOPLEN(NL))THEN
+                  J2=1
+               ELSE
+                  J2=JL+1
+               END IF
+
+               EXIT
+            END IF
+
+         END DO
+
+         IF(NL1>0.AND.NL2>0)THEN
+            EXIT
+         END IF
+
+      END DO
+
+      LOOPTYP(NL1)=0
+      LOOPTYP(NL2)=0
+      NLOOPDEL=NLOOPDEL+2
+
+      NLOOP=NLOOP+1
+
+      LOOPTYP(NLOOP)=1
+
+      LOLEN=0
+
+      DO JL=1,LOOPLEN(NL1)
+
+         J=JL+J1-1
+
+         IF(J>LOOPLEN(NL1))THEN
+            J=J-LOOPLEN(NL1)
+         END IF
+
+         LOLEN=LOLEN+1
+
+         LOOP(LOLEN,NLOOP)=LOOP(J,NL1)
+
+      END DO
+
+      DO JL=2,LOOPLEN(NL2)-1
+
+         J=JL+J2-1
+
+         IF(J>LOOPLEN(NL2))THEN
+            J=J-LOOPLEN(NL2)
+         END IF
+
+         LOLEN=LOLEN+1
+
+         LOOP(LOLEN,NLOOP)=LOOP(J,NL2)
+
+      END DO
+
+      LOOPLEN(NLOOP)=LOLEN
+
+   END DO
+
+   DEALLOCATE(MARK,PARTNER)
+
+   END SUBROUTINE
+
+!====================================================================
+
+   SUBROUTINE PEPCLEAN(NBONDPEP,NBONDDEL,BONDPEP,BONTYP,NPG,PGID,PGLEN,PGTYP,DNOR,ATOR,NATOM, &
+                       NLOOP,NLOOPDEL,LOOP,LOOPLEN,LOOPTYP)
+
+   IMPLICIT NONE
+
+   INTEGER NATOM,NPG,NR,JR,NB,NB1,NB2,JCOUNT,NPICK,NBONDPEP,NBONDDEL,NSYN,NS,JCYCLE,NBTEM
+   INTEGER NLOOP,NLOOPDEL,NA,NA1,NA2,NL1,NL2,JA1,JA2,JL,J1,J2,LOLEN,J,NBGET,NL
+
+   INTEGER,DIMENSION(:,:),ALLOCATABLE::PGID,BONDPEP,LOOP
+   INTEGER,DIMENSION(:),ALLOCATABLE::PGLEN,PGTYP,BONTYP,DNOR,ATOR,MARK,LOOPLEN,LOOPTYP
+
+   DO NB=1,NBONDPEP
+
+      IF(BONTYP(NB)/=2)THEN
+         CYCLE
+      END IF
+
+!      PRINT*,'REMOVE PARTNER OF SIGNALING PEP BOND'
+
+      NA1=BONDPEP(1,NB)
+
+      NBGET=0
+
+      DO NBTEM=1,NBONDPEP
+
+         IF(BONTYP(NBTEM)==0)THEN
+            CYCLE
+         END IF
+
+         IF(BONDPEP(2,NBTEM)==NA1)THEN
+
+            NBGET=NBTEM
+            EXIT
+         END IF
+
+      END DO
+
+      IF(NBGET==0)THEN
+         PRINT*,'ERROR FINDING SIGNAL BOND'
+         STOP
+      END IF
+
+      IF(BONTYP(NBGET)==2)THEN
+         CYCLE
+      END IF
+
+      BONTYP(NBGET)=0
+
+      NBONDDEL=NBONDDEL+1
+
+      ATOR(NA1)=1
+
+      NA2=BONDPEP(1,NBGET)
+
+      DNOR(NA2)=-1
+
+      BONTYP(NB)=1
+
+!     UPDATE LOOPS:
+
+      NL1=0; NL2=0
+
+      DO NL=1,NLOOP
+
+         IF(LOOPTYP(NL)==0)THEN
+            CYCLE
+         END IF
+
+         DO JL=1,LOOPLEN(NL)
+
+            JA1=LOOP(JL,NL)
+
+            IF(JL==LOOPLEN(NL))THEN
+               JA2=LOOP(1,NL)
+            ELSE
+               JA2=LOOP(JL+1,NL)
+            END IF
+
+            IF(JA1==NA1.AND.JA2==NA2)THEN
+               NL1=NL
+               IF(JL==LOOPLEN(NL))THEN
+                  J1=1
+               ELSE
+                  J1=JL+1
+               END IF
+               EXIT
+            END IF
+
+            IF(JA1==NA2.AND.JA2==NA1)THEN
+               NL2=NL
+               IF(JL==LOOPLEN(NL))THEN
+                  J2=1
+               ELSE
+                  J2=JL+1
+               END IF
+               EXIT
+            END IF
+
+         END DO
+
+         IF(NL1>0.AND.NL2>0)THEN
+            EXIT
+         END IF
+
+      END DO
+
+      IF(NL1==0.OR.NL2==0.OR.NL1==NL2)THEN
+         CYCLE
+      END IF
+
+      LOOPTYP(NL1)=0
+      LOOPTYP(NL2)=0
+
+      NLOOPDEL=NLOOPDEL+2
+
+      NLOOP=NLOOP+1
+      LOOPTYP(NLOOP)=1
+
+      LOLEN=0
+
+      DO JL=1,LOOPLEN(NL1)
+
+         J=J1-1+JL
+
+         IF(J>LOOPLEN(NL1))THEN
+            J=J-LOOPLEN(NL1)
+         END IF
+
+         LOLEN=LOLEN+1
+
+         LOOP(LOLEN,NLOOP)=LOOP(J,NL1)
+
+      END DO
+
+      DO JL=2,LOOPLEN(NL2)-1
+
+         J=J2-1+JL
+
+         IF(J>LOOPLEN(NL2))THEN
+            J=J-LOOPLEN(NL2)
+         END IF
+
+         LOLEN=LOLEN+1
+
+         LOOP(LOLEN,NLOOP)=LOOP(J,NL2)
+
+      END DO
+
+      LOOPLEN(NLOOP)=LOLEN
+
+
+   END DO
+
+!-----------------------------------------------
+
+!  REMOVE TAILS:
+
+   ALLOCATE(MARK(NATOM))
+
+   MARK=0
+
+   DO NB=1,NBONDPEP
+
+      IF(BONTYP(NB)==0)THEN
+         CYCLE
+      END IF
+
+      MARK(BONDPEP(1:2,NB))=1
+
+   END DO
+
+   DO NR=1,NPG
+
+      IF(PGTYP(NR)==0)THEN
+         CYCLE
+      END IF
+
+      JCOUNT=0
+
+      DO JR=1,PGLEN(NR)
+
+         NA=PGID(JR,NR)
+
+         IF(MARK(NA)==1)THEN
+            NB1=NA
+            JCOUNT=JCOUNT+1
+         END IF
+
+      END DO
+
+      IF(JCOUNT/=1)THEN
+         CYCLE
+      END IF
+
+      NPICK=0
+
+      DO NB=1,NBONDPEP
+
+         IF(BONTYP(NB)==0)THEN
+            CYCLE
+         END IF
+
+         IF(BONDPEP(1,NB)==NB1)THEN
+            NPICK=NB
+            NB2=BONDPEP(2,NB)
+            EXIT
+         END IF
+
+         IF(BONDPEP(2,NB)==NB1)THEN
+            NPICK=NB
+            NB2=BONDPEP(1,NB)
+            EXIT
+         END IF
+
+      END DO
+
+      NBONDDEL=NBONDDEL+1
+
+      BONTYP(NPICK)=0
+
+      IF(DNOR(NB1)==0)THEN
+         DNOR(NB1)=-1
+         ATOR(NB2)=1
+      ELSE
+         DNOR(NB2)=-1
+         ATOR(NB1)=1
+      END IF
+
+      MARK(NB1)=0
+      MARK(NB2)=0
+
+   END DO
+
+   DEALLOCATE(MARK)
+
+   END SUBROUTINE
+
+!====================================================================
+
+   SUBROUTINE LYTGLY(NPG,PGID,PGLEN,PGTYP,DNOR,ATOR,NATOMDEL)
+
+   IMPLICIT NONE
+
+   INTEGER NPG,NATOMDEL,NR,JR,JSTART,JSTOP,JDEL,NDEL,JCYCLE,JLAST,J,NA
+   INTEGER,ALLOCATABLE,DIMENSION(:)::DNOR,ATOR,PGLEN,PGTYP
+   INTEGER,ALLOCATABLE,DIMENSION(:,:)::PGID
+
+   DO NR=1,NPG
+
+      IF(PGTYP(NR)==0)THEN
+         CYCLE
+      END IF
+
+      JSTART=1
+      DO JR=1,PGLEN(NR)
+         NA=PGID(JR,NR)
+
+         IF(DNOR(NA)==0.OR.ATOR(NA)==0)THEN
+            JSTART=JR
+            EXIT
+         END IF
+      END DO
+
+      IF(JSTART>1)THEN
+         JDEL=0
+         DO JR=1,JSTART-1
+            IF(ATOR(PGID(JR,NR))==1)THEN
+               JDEL=JR
+               EXIT
+            END IF
+         END DO
+
+         IF(JDEL>0)THEN
+
+            NDEL=JSTART-JDEL
+
+            NATOMDEL=NATOMDEL+NDEL
+
+            ATOR(PGID(JDEL:JSTART-1,NR))=-1
+            DNOR(PGID(JDEL:JSTART-1,NR))=-1
+
+         END IF
+
+      END IF
+
+!--------------------------------
+
+      JSTOP=PGLEN(NR)
+      DO JR=PGLEN(NR),1,-1
+         NA=PGID(JR,NR)
+
+         IF(DNOR(NA)==0.OR.ATOR(NA)==0)THEN
+            JSTOP=JR
+            EXIT
+         END IF
+      END DO
+
+      IF(JSTOP<PGLEN(NR))THEN
+         JDEL=0
+         DO JR=PGLEN(NR),JSTOP+1,-1
+            IF(ATOR(PGID(JR,NR))==1)THEN
+               JDEL=JR
+               EXIT
+            END IF
+         END DO
+
+         IF(JDEL>0)THEN
+
+            NDEL=JDEL-JSTOP
+
+            NATOMDEL=NATOMDEL+NDEL
+
+            DNOR(PGID(JSTOP+1:JDEL,NR))=-1
+            ATOR(PGID(JSTOP+1:JDEL,NR))=-1
+
+         END IF
+
+      END IF
+
+!-----------------------------------------------
+
+!     FOR UNCROSSLINKED STRANDS:
+
+      JCYCLE=0
+
+      IF(JSTART==1.AND.JSTOP==PGLEN(NR))THEN
+         DO JR=1,PGLEN(NR)
+            NA=PGID(JR,NR)
+
+            IF(DNOR(NA)==0.OR.ATOR(NA)==0)THEN
+               JCYCLE=1
+               EXIT
+            ENDIF
+         END DO
+
+         IF(JCYCLE==1)THEN
+            CYCLE
+         END IF
+
+         JLAST=PGLEN(NR)
+
+         DO JR=1,PGLEN(NR)
+            NA=PGID(JR,NR)
+
+            IF(ATOR(NA)==-1)THEN
+               JLAST=JR-1
+               EXIT
+            END IF
+         END DO
+
+         IF(JLAST==0)THEN
+            CYCLE
+         END IF
+
+         NATOMDEL=NATOMDEL+JLAST
+
+         DNOR(PGID(1:JLAST,NR))=-1
+         ATOR(PGID(1:JLAST,NR))=-1
+
+      END IF
+
+   END DO
+
+   END SUBROUTINE
+
+!============================================
+
+   SUBROUTINE PG_UPDATE(NATOM,NDEL,DNOR,ATOR,PEPDIR,X,Y,Z,NPG,PGID, &
+                        PGLEN,PGTYP,PGDIR, &
+                        NLOOP,LOOP,LOOPLEN,LOOPTYP,NBONDGLY,NBONDPEP,BONDGLY,BONDPEP,BONTYP)
+
+   IMPLICIT NONE
+
+   INTEGER NATOM,NDEL,NPG,NSYN,NLOOP,NBONDGLY,NBONDGLYSTART,NBONDPEP
+   INTEGER N,NTEMP,NR,JR,LENGTH,NS,NL,JL,NA,NPGTEMP,J,NEINUM,NB
+   INTEGER,ALLOCATABLE,DIMENSION(:)::DNOR,ATOR,PEPDIR,PGLEN,PGTYP,PGDIR,LOOPLEN,LOOPTYP,MAP
+   INTEGER,ALLOCATABLE,DIMENSION(:)::BONTYP,DNORTEMP,ATORTEMP,GLYTIP,GLYSEC,PBP4BOND,PBP4PEP
+   INTEGER,ALLOCATABLE,DIMENSION(:,:)::PGID,LOOP,BONDGLY,BONDPEP
+   INTEGER,ALLOCATABLE,DIMENSION(:,:)::NEIBOND,TPPEP
+   DOUBLE PRECISION,ALLOCATABLE,DIMENSION(:)::X,Y,Z,ATOMRAD
+
+   ALLOCATE(MAP(NATOM),DNORTEMP(NATOM-NDEL),ATORTEMP(NATOM-NDEL))
+
+
+   NTEMP=0
+
+   DO N=1,NATOM
+      IF(ATOR(N)/=-1)THEN
+         NTEMP=NTEMP+1
+         MAP(N)=NTEMP
+         DNORTEMP(NTEMP)=DNOR(N)
+         ATORTEMP(NTEMP)=ATOR(N)
+         PEPDIR(NTEMP)=PEPDIR(N)
+         X(NTEMP)=X(N)
+         Y(NTEMP)=Y(N)
+         Z(NTEMP)=Z(N)
+      END IF
+   END DO
+
+   IF(NATOM-NDEL/=NTEMP)THEN
+      PRINT*,'ERROR IN COUNTING DELETED ATOMS',NATOM,NDEL,NTEMP
+      STOP
+   END IF
+
+   NATOM=NTEMP
+
+!-----------------------------
+
+   NBONDGLY=0
+
+   DO NR=1,NPG
+
+      LENGTH=0
+
+      DO JR=1,PGLEN(NR)
+         IF(ATOR(PGID(JR,NR))==-1)THEN
+            CYCLE
+         END IF
+
+         LENGTH=LENGTH+1
+
+         NA=PGID(JR,NR)
+
+         PGID(LENGTH,NR)=MAP(NA)
+
+         IF(LENGTH>1)THEN
+            NBONDGLY=NBONDGLY+1
+            BONDGLY(1,NBONDGLY)=PGID(LENGTH-1,NR)
+            BONDGLY(2,NBONDGLY)=PGID(LENGTH,NR)
+         END IF
+      END DO
+
+      PGLEN(NR)=LENGTH
+
+      IF(PGTYP(NR)==0)THEN
+         NBONDGLY=NBONDGLY+1
+         BONDGLY(2,NBONDGLY)=PGID(1,NR)
+         BONDGLY(1,NBONDGLY)=PGID(LENGTH,NR)
+      END IF
+
+   END DO
+
+!----------------------------------
+!  CLEAN UP UNCROSSLINKED STRANDS:
+
+   NPGTEMP=0
+
+   DO NR=1,NPG
+
+      IF(PGLEN(NR)==0)THEN
+         CYCLE
+      END IF
+
+      NPGTEMP=NPGTEMP+1
+
+      PGLEN(NPGTEMP)=PGLEN(NR)
+
+      PGTYP(NPGTEMP)=PGTYP(NR)
+
+      PGDIR(NPGTEMP)=PGDIR(NR)
+
+      PGID(1:PGLEN(NR),NPGTEMP)=PGID(1:PGLEN(NR),NR)
+
+
+   END DO
+
+   NPG=NPGTEMP
+
+!-------------
+
+   DO NB=1,NBONDPEP
+
+      IF(BONTYP(NB)==0)THEN
+         CYCLE
+      END IF
+
+      BONDPEP(1:2,NB)=MAP(BONDPEP(1:2,NB))
+
+   END DO
+
+!------------
+
+
+   DO NL=1,NLOOP
+      IF(LOOPTYP(NL)==0)THEN
+         CYCLE
+      END IF
+
+      LENGTH=0
+
+      DO JL=1,LOOPLEN(NL)
+
+         NA=LOOP(JL,NL)
+
+         IF(ATOR(NA)==-1)THEN
+            CYCLE
+         END IF
+
+         IF(LENGTH>0)THEN
+            IF(NA==LOOP(LENGTH,NL))THEN
+               CYCLE
+            END IF
+         END IF
+
+
+         LENGTH=LENGTH+1
+
+         LOOP(LENGTH,NL)=NA
+
+      END DO
+
+      IF(LOOP(1,NL)==LOOP(LENGTH,NL))THEN
+         LENGTH=LENGTH-1
+      END IF
+
+      LOOPLEN(NL)=LENGTH
+
+      LOOP(1:LENGTH,NL)=MAP(LOOP(1:LENGTH,NL))
+
+   END DO
+
+   DNOR(1:NATOM)=DNORTEMP(1:NATOM)
+   ATOR(1:NATOM)=ATORTEMP(1:NATOM)
+
+   DEALLOCATE(MAP,DNORTEMP,ATORTEMP)
+
+   END SUBROUTINE
+
+!====================================================================
+
+   SUBROUTINE DIVISIONPLANE(NTHREAD,NATOM,X,Y,Z,NPG,PGID,PGLEN,PGTYP,PGDIR,NBONDPEP,BONDPEP,BONTYP, &
+                            NLOOP,LOOP,LOOPLEN,LOOPTYP,DNOR,ATOR,UX,UY,UZ,XCEN,YCEN,ZCEN,RADIUS)
+
+   IMPLICIT NONE
+
+   INTEGER NATOM,PGCAP1,PGCAP2,NTEMP,N,CHECK,NPG,NBONDPEP,NBONDGLY,NLOOP,J1,J2,J3,N1,N2,N3,NR,NA,JR,NTHREAD
+   INTEGER,DIMENSION(:,:),ALLOCATABLE::PGID,BONDPEP,BONDGLY,LOOP
+   INTEGER,DIMENSION(:),ALLOCATABLE::PGLEN,PGTYP,PGDIR,LOOPLEN,DNOR,ATOR,BONTYP,LOOPTYP
+   DOUBLE PRECISION DX1,DX2,XNOR,DY1,DY2,YNOR,DZ1,DZ2,ZNOR
+   DOUBLE PRECISION XCAP1,XCAP2,BETA,UX,UY,UZ,XCEN,YCEN,ZCEN,RADIUS,DX,DY,DZ,ARG
+   DOUBLE PRECISION UXTEM,UYTEM,UZTEM,YCENTEM,ZCENTEM
+   DOUBLE PRECISION X0,Y0,Z0,X00,Y00,Z00,F,FY,FZ,FYOLD,FZOLD,DEV2,SIGMA2,REP,DIST,INVDIST,INVBETA
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: X,Y,Z,XTEMP,YTEMP,ZTEMP
+
+
+   BETA=0.000000001D0
+   INVBETA=1.0D0/BETA
+
+!  FIRST, AXIS CONNECTS TWO LOCAL CENTERS:
+
+   X0=XCEN-5.0D0;
+   Y0=0.0D0; Z0=0.0D0
+
+   ALLOCATE(XTEMP(10000),YTEMP(10000),ZTEMP(10000))
+   NTEMP=0
+
+   DO N=1,NATOM
+      IF(X(N)>X0-5.0D0.AND.X(N)<X0+5.0D0)THEN
+         NTEMP=NTEMP+1
+         XTEMP(NTEMP)=X0
+         YTEMP(NTEMP)=Y(N)
+         ZTEMP(NTEMP)=Z(N)
+      END IF
+   END DO
+
+   FY=0.0D0; FZ=0.0D0
+   CHECK=0
+
+   DO N=1,100000000
+      FYOLD=FY; FZOLD=FZ
+
+      CALL DEVIATION(X0,Y0,Z0,XTEMP,YTEMP,ZTEMP,NTEMP,SIGMA2)
+      DEV2=SIGMA2
+!--------
+      REP=Y0+BETA
+      CALL DEVIATION(X0,REP,Z0,XTEMP,YTEMP,ZTEMP,NTEMP,SIGMA2)
+
+      FY=-(SIGMA2-DEV2)*INVBETA
+!-------
+      REP=Z0+BETA
+      CALL DEVIATION(X0,Y0,REP,XTEMP,YTEMP,ZTEMP,NTEMP,SIGMA2)
+
+      FZ=-(SIGMA2-DEV2)*INVBETA
+!----------
+
+      F=SQRT(FY**2+FZ**2)
+      Y0=Y0+0.002D0*FY/F
+      Z0=Z0+0.002D0*FZ/F
+
+      IF(FY*FYOLD+FZ*FZOLD<0.0D0)THEN
+         CHECK=CHECK+1
+         IF(CHECK==10)THEN
+            EXIT
+         END IF
+      ELSE
+         CHECK=0
+      END IF
+
+   END DO
+
+   YCEN=Y0
+   ZCEN=Z0
+
+!-------------
+
+   X00=XCEN+5.0D0; Y00=0.0D0; Z00=0.0D0
+
+   NTEMP=0
+
+   DO N=1,NATOM
+      IF(X(N)>X00-5.0D0.AND.X(N)<X00+5.0D0)THEN
+         NTEMP=NTEMP+1
+         XTEMP(NTEMP)=X00
+         YTEMP(NTEMP)=Y(N)
+         ZTEMP(NTEMP)=Z(N)
+      END IF
+   END DO
+
+   FY=0.0D0; FZ=0.0D0
+   CHECK=0
+
+   DO N=1,100000000
+      FYOLD=FY; FZOLD=FZ
+
+      CALL DEVIATION(X00,Y00,Z00,XTEMP,YTEMP,ZTEMP,NTEMP,SIGMA2)
+      DEV2=SIGMA2
+!--------
+      REP=Y00+BETA
+      CALL DEVIATION(X00,REP,Z00,XTEMP,YTEMP,ZTEMP,NTEMP,SIGMA2)
+
+      FY=-(SIGMA2-DEV2)*INVBETA
+!-------
+      REP=Z00+BETA
+      CALL DEVIATION(X00,Y00,REP,XTEMP,YTEMP,ZTEMP,NTEMP,SIGMA2)
+
+      FZ=-(SIGMA2-DEV2)*INVBETA
+!----------
+
+      F=SQRT(FY**2+FZ**2)
+      Y00=Y00+0.002D0*FY/F
+      Z00=Z00+0.002D0*FZ/F
+      IF(FY*FYOLD+FZ*FZOLD<0.0D0)THEN
+         CHECK=CHECK+1
+         IF(CHECK==10)THEN
+            EXIT
+         END IF
+      ELSE
+         CHECK=0
+      END IF
+
+   END DO
+
+   UX=X00-X0; UY=Y00-Y0; UZ=Z00-Z0
+
+   DIST=SQRT(UX**2+UY**2+UZ**2)
+
+   INVDIST=1.0D0/DIST
+
+   UXTEM=UX*INVDIST
+   UYTEM=UY*INVDIST
+   UZTEM=UZ*INVDIST
+
+   YCENTEM=0.5D0*(Y0+Y00)
+   ZCENTEM=0.5D0*(Z0+Z00)
+
+!--------------------------------------------
+!--------------------------------------------
+
+!  SECOND, AXIS IS PERPENDICULAR TO THE STRANDS:
+
+   X0=XCEN!-5.0D0;
+   Y0=0.0D0; Z0=0.0D0
+
+   NTEMP=0
+
+   DO N=1,NATOM
+      IF(X(N)>X0-5.0D0.AND.X(N)<X0+5.0D0)THEN
+         NTEMP=NTEMP+1
+         XTEMP(NTEMP)=X0
+         YTEMP(NTEMP)=Y(N)
+         ZTEMP(NTEMP)=Z(N)
+      END IF
+   END DO
+
+   FY=0.0D0; FZ=0.0D0
+   CHECK=0
+
+   DO N=1,100000000
+      FYOLD=FY; FZOLD=FZ
+
+      CALL DEVIATION(X0,Y0,Z0,XTEMP,YTEMP,ZTEMP,NTEMP,SIGMA2)
+      DEV2=SIGMA2
+!--------
+      REP=Y0+BETA
+      CALL DEVIATION(X0,REP,Z0,XTEMP,YTEMP,ZTEMP,NTEMP,SIGMA2)
+
+      FY=-(SIGMA2-DEV2)*INVBETA
+!-------
+      REP=Z0+BETA
+      CALL DEVIATION(X0,Y0,REP,XTEMP,YTEMP,ZTEMP,NTEMP,SIGMA2)
+
+      FZ=-(SIGMA2-DEV2)*INVBETA
+!----------
+
+      F=SQRT(FY**2+FZ**2)
+      Y0=Y0+0.002D0*FY/F
+      Z0=Z0+0.002D0*FZ/F
+
+      IF(FY*FYOLD+FZ*FZOLD<0.0D0)THEN
+         CHECK=CHECK+1
+         IF(CHECK==10)THEN
+            EXIT
+         END IF
+      ELSE
+         CHECK=0
+      END IF
+
+   END DO
+
+   YCEN=Y0
+   ZCEN=Z0
+
+!------------------------------
+
+   UX=0.0D0; UY=0.0D0; UZ=0.0D0
+
+   DO NR=1,NPG
+
+      IF(PGTYP(NR)==0)THEN
+         CYCLE
+      END IF
+
+      IF(PGLEN(NR)<7)THEN
+         CYCLE
+      END IF
+
+      NA=PGID(PGLEN(NR)/2,NR)
+
+      IF(ABS(X(NA)-XCEN)>8.0D0)THEN
+         CYCLE
+      END IF
+
+      J1=0; J2=0
+
+      DO JR=1,PGLEN(NR)
+
+         IF(DNOR(PGID(JR,NR))==0.OR.ATOR(PGID(JR,NR))==0)THEN
+            J1=JR
+            EXIT
+         END IF
+
+      END DO
+
+      DO JR=PGLEN(NR),1,-1
+
+         IF(DNOR(PGID(JR,NR))==0.OR.ATOR(PGID(JR,NR))==0)THEN
+            J2=JR
+            EXIT
+         END IF
+
+      END DO
+
+      IF(J1==0.OR.J2==0.OR.J2-J1<6)THEN
+         CYCLE
+      END IF
+
+      J1=J1+1
+
+      JR=(J2-1-J1)/4
+
+      J2=J1+4*JR
+
+      J3=(J2+J1)/2 ! THIS IS THE EFFECTIVE CENTER OF THE STRAND
+
+      N1=PGID(J1,NR)
+      N2=PGID(J2,NR)
+      N3=PGID(J3,NR)
+
+      DX1=X(N3)-X(N1)
+      DY1=Y(N3)-Y(N1)
+      DZ1=Z(N3)-Z(N1)
+
+      DX2=X(N2)-X(N3)
+      DY2=Y(N2)-Y(N3)
+      DZ2=Z(N2)-Z(N3)
+
+      XNOR=DY1*DZ2-DZ1*DY2
+      YNOR=DZ1*DX2-DX1*DZ2
+      ZNOR=DX1*DY2-DY1*DX2
+
+      DIST=SQRT(XNOR**2+YNOR**2+ZNOR**2)
+
+      UX=UX+PGDIR(NR)*XNOR/DIST
+      UY=UY+PGDIR(NR)*YNOR/DIST
+      UZ=UZ+PGDIR(NR)*ZNOR/DIST
+
+   END DO
+
+   DIST=SQRT(UX*UX+UY*UY+UZ*UZ)
+
+   UX=UX/DIST
+   UY=UY/DIST
+   UZ=UZ/DIST
+
+!-----------------------------------------
+
+!  NOW, RECONCILE TWO METHODS:
+
+   YCEN=0.5D0*(YCEN+YCENTEM)
+   ZCEN=0.5D0*(ZCEN+ZCENTEM)
+
+   UX=UX+UXTEM
+   UY=UY+UYTEM
+   UZ=UZ+UZTEM
+
+   DIST=SQRT(UX*UX+UY*UY+UZ*UZ)
+
+   UX=UX/DIST
+   UY=UY/DIST
+   UZ=UZ/DIST
+
+!-----------------------------------------
+
+!-----------------------------------------
+
+   RADIUS=0.0D0
+
+   NTEMP=0
+
+   DO N=1,NATOM
+
+      IF(X(N)<XCEN-3.0D0.OR.X(N)>XCEN+3.0D0)THEN
+         CYCLE
+      END IF
+
+      DX=X(N)-XCEN
+      DY=Y(N)-YCEN
+      DZ=Z(N)-ZCEN
+
+      ARG=DX*UX+DY*UY+DZ*UZ
+
+      DX=DX-UX*ARG
+      DY=DY-UY*ARG
+      DZ=DZ-UZ*ARG
+
+      RADIUS=RADIUS+SQRT(DX*DX+DY*DY+DZ*DZ)
+
+      NTEMP=NTEMP+1
+
+   END DO
+
+   RADIUS=RADIUS/NTEMP
+
+!  TO MAKE THE NEW CAP A LITTLE SMALLER AND REFLECT CONSTRICTION:
+
+   RADIUS=0.98D0*RADIUS
+
+   CALL CONSTRICT(NTHREAD,NATOM,X,Y,Z,NPG,PGID,PGLEN,PGTYP,NBONDPEP,BONDPEP,BONTYP,NLOOP,LOOP,LOOPLEN,LOOPTYP, &
+                  UX,UY,UZ,XCEN,YCEN,ZCEN,RADIUS)
+
+   END SUBROUTINE
+
+!====================================================================
+
+   SUBROUTINE CONSTRICT(NTHREAD,NATOM,X,Y,Z,NPG,PGID,PGLEN,PGTYP,NBONDPEP,BONDPEP,BONTYP,NLOOP,LOOP,LOOPLEN,LOOPTYP, &
+                  UX,UY,UZ,XCEN,YCEN,ZCEN,RADIUS)
+
+   IMPLICIT NONE
+
+   INTEGER NATOM,NBONDPEP,NLOOP,NPG,NSTEP,JSTEP,JFORCE,NTHREAD,NSIG
+
+   INTEGER,DIMENSION(:,:),ALLOCATABLE::LOOP,PGID,BONDPEP,BONDGLY,SIGBOND
+   INTEGER,DIMENSION(:),ALLOCATABLE::LOOPLEN,PGLEN,PGTYP,BONTYP,LOOPTYP
+
+
+   DOUBLE PRECISION L_G,K_G,L_P,K_P,THETA_0,KTHETA,PRES,UX,UY,UZ,XCEN,YCEN,ZCEN,RADIUS
+   DOUBLE PRECISION LSTART,LREP
+   DOUBLE PRECISION KSWITCH,LSWITCH,MSWITCH,SLOPE,ESWITCH,DELTA,INVDELTA,BETA
+   DOUBLE PRECISION GAM,FAMAX,PI
+
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE::FX,FY,FZ,FAMAG,FXGLY,FYGLY,FZGLY
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE::FXPEP,FYPEP,FZPEP,FXTHETA,FYTHETA,FZTHETA
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE::FXPRES,FYPRES,FZPRES,FXCON,FYCON,FZCON
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: X,Y,Z
+
+   CHARACTER(50) CHARA
+
+   PI=3.141592653589793239D0
+
+!  Spring constant and relaxed length for glycan:
+   K_G=577.0D0 ! unit=1e-20 J/nm**2
+   L_G=2.005D0 ! unit=nm
+
+!  Worm-like chain model force constant for peptide crosslink:
+   K_P=1.49D0
+
+!  Effective contour length for crosslink:
+   L_P=3.8D0
+
+!  Bending stiffness for glycan:
+   KTHETA=8.36D0 ! unit=1e-20 J
+   THETA_0=PI
+
+!  Turgor pressure:
+   PRES=0.03D0   ! unit=1e-20 J/nm**3
+
+   ALLOCATE(FX(NATOM),FY(NATOM),FZ(NATOM))
+   ALLOCATE(FXGLY(NATOM),FYGLY(NATOM),FZGLY(NATOM))
+   ALLOCATE(FXPEP(NATOM),FYPEP(NATOM),FZPEP(NATOM))
+   ALLOCATE(FXTHETA(NATOM),FYTHETA(NATOM),FZTHETA(NATOM))
+   ALLOCATE(FXPRES(NATOM),FYPRES(NATOM),FZPRES(NATOM))
+   ALLOCATE(FXCON(NATOM),FYCON(NATOM),FZCON(NATOM),FAMAG(NATOM))
+
+   ALLOCATE(SIGBOND(2,100))
+   NSIG=0
+
+!  SET PARAMETERS:
+
+   LSTART=1.0D0
+
+   LREP=L_P-LSTART
+
+   LSWITCH=0.9D0*LREP
+
+   ESWITCH=K_P*LSWITCH**2*(LREP/4.0D0/(LREP-LSWITCH)+0.5D0)
+
+   SLOPE=K_P*(LREP/4.0D0/(1.0D0-LSWITCH/LREP)**2-LREP/4.0D0+LSWITCH)
+
+   KSWITCH=SLOPE/2.0D0/LSWITCH
+
+   DELTA=0.000001D0
+   INVDELTA=1.0D0/DELTA
+
+   BETA=0.00000000000001D0
+
+   NSTEP=20000
+
+   DO JSTEP=1,NSTEP
+
+      IF(MOD(JSTEP-1,10)==0)THEN
+         JFORCE=1
+      ELSE
+         JFORCE=0
+      END IF
+
+      CALL FGLYCANS(FXGLY,FYGLY,FZGLY,FXTHETA,FYTHETA,FZTHETA, &
+                     NPG,PGID,PGLEN,PGTYP,X,Y,Z,L_G,K_G,THETA_0,KTHETA,JFORCE,DELTA,INVDELTA,BETA,PI)
+
+
+      CALL FPEPBONDS(JFORCE,FXPEP,FYPEP,FZPEP,X,Y,Z,NBONDPEP,BONDPEP,BONTYP,NSIG,SIGBOND, &
+                     L_P,K_P,LSTART,LREP,LSWITCH,KSWITCH,MSWITCH)
+
+      CALL FPRES(JFORCE,NATOM,FXPRES,FYPRES,FZPRES,X,Y,Z,NLOOP,LOOP,LOOPLEN,LOOPTYP,PRES,NTHREAD,DELTA,INVDELTA)
+
+      CALL CONFORCE(NATOM,X,Y,Z,FXCON,FYCON,FZCON,XCEN,YCEN,ZCEN,UX,UY,UZ,RADIUS)
+
+      FX=FXGLY+FXPEP+FXTHETA+FXPRES+FXCON
+      FY=FYGLY+FYPEP+FYTHETA+FYPRES+FYCON
+      FZ=FZGLY+FZPEP+FZTHETA+FZPRES+FZCON
+
+      FAMAG(1:NATOM)=SQRT(FX(1:NATOM)**2+FY(1:NATOM)**2+FZ(1:NATOM)**2)
+
+      FAMAX=MAXVAL(FAMAG(1:NATOM))
+
+      GAM=0.005/FAMAX
+
+      X(1:NATOM)=X(1:NATOM)+GAM*FX(1:NATOM)
+      Y(1:NATOM)=Y(1:NATOM)+GAM*FY(1:NATOM)
+      Z(1:NATOM)=Z(1:NATOM)+GAM*FZ(1:NATOM)
+
+   END DO
+
+   DEALLOCATE(FX,FY,FZ,FAMAG)
+   DEALLOCATE(FXGLY,FYGLY,FZGLY)
+   DEALLOCATE(FXPEP,FYPEP,FZPEP)
+   DEALLOCATE(FXTHETA,FYTHETA,FZTHETA)
+   DEALLOCATE(FXPRES,FYPRES,FZPRES)
+   DEALLOCATE(FXCON,FYCON,FZCON)
+
+   END SUBROUTINE
+
+!====================================================================
+
+   SUBROUTINE CONFORCE(NATOM,X,Y,Z,FXCON,FYCON,FZCON,XCEN,YCEN,ZCEN,UX,UY,UZ,RADIUS)
+
+   IMPLICIT NONE
+
+   INTEGER NATOM,N
+
+   DOUBLE PRECISION XCEN,YCEN,ZCEN,UX,UY,UZ,RADIUS
+   DOUBLE PRECISION DX,DY,DZ,PROJ,RAD,INVRAD,F0,F,D0
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: X,Y,Z,FXCON,FYCON,FZCON
+
+   FXCON=0.0D0; FYCON=0.0D0; FZCON=0.0D0
+
+   F0=1.0D0
+
+   D0=5.0D0
+
+   DO N=1,NATOM
+
+      IF(ABS(X(N)-XCEN)>8.0D0)THEN
+         CYCLE
+      END IF
+
+      DX=X(N)-XCEN
+      DY=Y(N)-YCEN
+      DZ=Z(N)-ZCEN
+
+      PROJ=DX*UX+DY*UY+DZ*UZ
+
+      IF(ABS(PROJ)>D0)THEN
+         CYCLE
+      END IF
+
+      F=-F0*(D0-PROJ)/D0
+
+      DX=DX-PROJ*UX
+      DY=DY-PROJ*UY
+      DZ=DZ-PROJ*UZ
+
+      RAD=SQRT(DX*DX+DY*DY+DZ*DZ)
+
+      IF(RAD>RADIUS)THEN
+
+         INVRAD=1.0D0/RAD
+
+         FXCON(N)=F*DX*INVRAD
+         FYCON(N)=F*DY*INVRAD
+         FZCON(N)=F*DZ*INVRAD
+
+      END IF
+
+   END DO
+
+   END SUBROUTINE
+
+!========================================================================
+
+   SUBROUTINE DIVSTRAND(X,Y,Z,XCEN,YCEN,ZCEN,UX,UY,UZ,NPG,PGID,PGLEN,PGTYP,PGDIR,MARK, &
+              NLOOP,NLOOPDEL,LOOP,LOOPLEN,LOOPTYP,DNOR,ATOR,NBONDPEP,NBONDDEL,BONDPEP,BONTYP)
+
+   IMPLICIT NONE
+
+   INTEGER NPG,NLOOP,NLOOPDEL,NBONDPEP,NBONDDEL,JA1,JA2,NA,NB,J1,J2,J,LEN1,LEN2
+   INTEGER NR,JR,JGET,NGET1,NGET2,N1,N2,LO1,LO2,NL,JL,JTEM,JPLUS,JSTART,JEXIT,LOLEN
+   INTEGER,ALLOCATABLE,DIMENSION(:)::PGLEN,PGTYP,LOOPLEN,LOOPTYP,PART1,PART2
+   INTEGER,ALLOCATABLE,DIMENSION(:)::LOOPTEMP,MARK,PGDIR,BONTYP,DNOR,ATOR
+   INTEGER,ALLOCATABLE,DIMENSION(:,:)::PGID,LOOP,BONDPEP
+   DOUBLE PRECISION,ALLOCATABLE,DIMENSION(:)::X,Y,Z
+   DOUBLE PRECISION DX,DY,DZ,XCEN,YCEN,ZCEN,UX,UY,UZ,ARG1,ARG2
+
+
+   DO NR=1,NPG
+
+      IF(MARK(NR)==0)THEN
+         CYCLE
+      END IF
+
+      IF(PGLEN(NR)==1)THEN
+         CYCLE
+      END IF
+
+      JGET=0
+      NGET1=0
+      NGET2=0
+
+      DO JR=1,PGLEN(NR)-1
+         N1=PGID(JR,NR)
+         N2=PGID(JR+1,NR)
+
+         DX=X(N1)-XCEN
+         DY=Y(N1)-YCEN
+         DZ=Z(N1)-ZCEN
+
+         ARG1=DX*UX+DY*UY+DZ*UZ
+
+         DX=X(N2)-XCEN
+         DY=Y(N2)-YCEN
+         DZ=Z(N2)-ZCEN
+
+         ARG2=DX*UX+DY*UY+DZ*UZ
+
+         IF(ARG1*ARG2<0.0D0)THEN
+            JGET=JR
+            NGET1=N1
+            NGET2=N2
+            EXIT
+         END IF
+
+      END DO
+
+      IF(JGET>0)THEN
+
+         LO1=0; LO2=0
+
+         JEXIT=0
+
+         DO NL=1,NLOOP
+
+            IF(LOOPTYP(NL)==0)THEN
+               CYCLE
+            END IF
+
+            DO JL=1,LOOPLEN(NL)
+
+               N1=LOOP(JL,NL)
+
+               IF(JL==LOOPLEN(NL))THEN
+                  N2=LOOP(1,NL)
+               ELSE
+                  N2=LOOP(JL+1,NL)
+               END IF
+
+               IF(N1==NGET1.AND.N2==NGET2)THEN
+                  LO1=NL
+                  IF(LO2>0)THEN
+                     JEXIT=1
+                     EXIT
+                  END IF
+               END IF
+
+               IF(N1==NGET2.AND.N2==NGET1)THEN
+                  LO2=NL
+                  IF(LO1>0)THEN
+                     JEXIT=1
+                     EXIT
+                  END IF
+
+               END IF
+
+            END DO
+
+            IF(JEXIT==1)THEN
+               EXIT
+            END IF
+
+         END DO
+
+         IF(LO1==LO2)THEN
+
+            J1=0; J2=0
+
+            LOLEN=LOOPLEN(LO1)
+
+            DO JL=1,LOLEN
+
+               JA1=LOOP(JL,LO1)
+
+               IF(JL==LOLEN)THEN
+                  JA2=LOOP(1,LO1)
+               ELSE
+                  JA2=LOOP(JL+1,LO1)
+               END IF
+
+               IF(JA1==NGET2.AND.JA2==NGET1)THEN
+
+                  IF(JL==LOLEN)THEN
+                     J1=1
+                  ELSE
+                     J1=JL+1
+                  END IF
+
+               END IF
+
+               IF(JA1==NGET1.AND.JA2==NGET2)THEN
+
+                  IF(JL==LOLEN)THEN
+                     J2=1
+                  ELSE
+                     J2=JL+1
+                  END IF
+
+               END IF
+
+            END DO
+
+            IF(J1==0.OR.J2==0)THEN
+               PRINT*,'COULD NOT FIND LOOP INDICES'
+               STOP
+            END IF
+
+            ALLOCATE(PART1(LOLEN),PART2(LOLEN))
+
+            LEN1=0
+
+            DO JL=1,LOLEN
+
+               J=JL+J1-1
+
+               IF(J>LOLEN)THEN
+                  J=J-LOLEN
+               END IF
+
+               LEN1=LEN1+1
+
+               PART1(LEN1)=LOOP(J,LO1)
+
+               IF(PART1(LEN1)==NGET2)THEN
+                  LEN1=LEN1-2
+                  EXIT
+               END IF
+
+            END DO
+
+            LEN2=0
+
+            DO JL=1,LOLEN
+
+               J=JL+J2-1
+
+               IF(J>LOLEN)THEN
+                  J=J-LOLEN
+               END IF
+
+               LEN2=LEN2+1
+
+               PART2(LEN2)=LOOP(J,LO1)
+
+               IF(PART2(LEN2)==NGET1)THEN
+                  LEN2=LEN2-2
+                  EXIT
+               END IF
+
+            END DO
+
+!           BREAK THE STRAND:
+
+            NPG=NPG+1
+
+            PGLEN(NPG)=PGLEN(NR)-JGET
+
+            PGTYP(NPG)=PGTYP(NR)
+
+            PGDIR(NPG)=PGDIR(NR)
+
+            PGID(1:PGLEN(NPG),NPG)=PGID(JGET+1:PGLEN(NR),NR)
+
+            PGLEN(NR)=JGET
+
+            MARK(NPG)=1
+
+            IF(LEN1<LEN2)THEN
+               LOOP(1:LEN2,LO1)=PART2(1:LEN2)
+               LOOPLEN(LO1)=LEN2
+            ELSE
+               LOOP(1:LEN1,LO1)=PART1(1:LEN1)
+               LOOPLEN(LO1)=LEN1
+               LEN1=LEN2
+               PART1(1:LEN1)=PART2(1:LEN2)
+            END IF
+
+!           BREAK ALL PEP-BOND ON THE OTHER PART:
+
+            DO J=1,LEN1
+
+               NA=PART1(J)
+
+               IF(DNOR(NA)==0.OR.ATOR(NA)==0)THEN
+
+                  DO NB=1,NBONDPEP
+
+                     IF(BONTYP(NB)==0)THEN
+                        CYCLE
+                     END IF
+
+                     IF(BONDPEP(1,NB)==NA.OR.BONDPEP(2,NB)==NA)THEN
+                        NBONDDEL=NBONDDEL+1
+                        BONTYP(NB)=0
+                        DNOR(BONDPEP(1,NB))=-1
+                        ATOR(BONDPEP(2,NB))=1
+                        EXIT
+                     END IF
+
+                  END DO
+
+               END IF
+
+   !           REMOVE LOOPS CONNECTED TO THIS PART:
+
+               DO NL=1,NLOOP
+
+                  IF(LOOPTYP(NL)==0)THEN
+                     CYCLE
+                  END IF
+
+                  DO JL=1,LOOPLEN(NL)
+                     IF(LOOP(JL,NL)==NA)THEN
+                        NLOOPDEL=NLOOPDEL+1
+                        LOOPTYP(NL)=0
+                        EXIT
+                     END IF
+                  END DO
+
+               END DO
+            END DO
+
+            DEALLOCATE(PART1,PART2)
+
+            CYCLE
+         END IF
+
+!        NOW CHANGE LOOPS AND PGID:
+
+         NLOOPDEL=NLOOPDEL+2
+
+         LOOPTYP(LO1)=0
+         LOOPTYP(LO2)=0
+
+         NLOOP=NLOOP+1
+         LOOPTYP(NLOOP)=1
+
+         DO JL=1,LOOPLEN(LO1)
+            JPLUS=JL+1
+
+            IF(JL==LOOPLEN(LO1))THEN
+               JPLUS=1
+            END IF
+
+            IF(LOOP(JL,LO1)==NGET1.AND.LOOP(JPLUS,LO1)==NGET2)THEN
+               JSTART=JPLUS
+               EXIT
+            END IF
+
+         END DO
+
+         LOLEN=0
+
+         ALLOCATE(LOOPTEMP(LOOPLEN(LO1)+LOOPLEN(LO2)-2))
+
+         DO JL=1,LOOPLEN(LO1)
+
+            JTEM=JL+JSTART-1
+
+            IF(JTEM>LOOPLEN(LO1))THEN
+               JTEM=JTEM-LOOPLEN(LO1)
+            END IF
+
+            LOLEN=LOLEN+1
+
+            LOOPTEMP(LOLEN)=LOOP(JTEM,LO1)
+
+         END DO
+
+         DO JL=1,LOOPLEN(LO2)
+
+            JPLUS=JL+1
+
+            IF(JL==LOOPLEN(LO2))THEN
+               JPLUS=1
+            END IF
+
+            IF(LOOP(JL,LO2)==NGET2.AND.LOOP(JPLUS,LO2)==NGET1)THEN
+               JSTART=JPLUS
+               EXIT
+            END IF
+
+         END DO
+
+         DO JL=2,LOOPLEN(LO2)-1
+
+            JTEM=JL+JSTART-1
+
+            IF(JTEM>LOOPLEN(LO2))THEN
+               JTEM=JTEM-LOOPLEN(LO2)
+            END IF
+
+            LOLEN=LOLEN+1
+
+            LOOPTEMP(LOLEN)=LOOP(JTEM,LO2)
+
+         END DO
+
+         LOOP(1:LOLEN,NLOOP)=LOOPTEMP(1:LOLEN)
+
+         LOOPLEN(NLOOP)=LOLEN
+
+         DEALLOCATE(LOOPTEMP)
+
+!--------
+
+         NPG=NPG+1
+
+         PGLEN(NPG)=PGLEN(NR)-JGET
+
+         PGTYP(NPG)=PGTYP(NR)
+
+         PGDIR(NPG)=PGDIR(NR)
+
+         PGID(1:PGLEN(NPG),NPG)=PGID(JGET+1:PGLEN(NR),NR)
+
+         PGLEN(NR)=JGET
+
+         MARK(NPG)=1
+
+!------------------------------
+
+      END IF
+
+   END DO
+
+
+
+   END SUBROUTINE
+
+!============================================
+
+   SUBROUTINE CLEANUP(NATOM,NDEL,DNOR,ATOR,PEPDIR,X,Y,Z,NPG,PGID,PGLEN,PGTYP,PGDIR,MARK, &
+                      NLOOP,LOOP,LOOPLEN,LOOPTYP,NBONDPEP,BONDPEP,BONTYP)
+
+   IMPLICIT NONE
+
+   INTEGER NATOM,NDEL,NPG,NLOOP,NBONDPEP,NB,NB1,NB2
+   INTEGER N,NTEMP,NR,JR,LENGTH,NL,JL,NA,NPGTEMP
+   INTEGER,ALLOCATABLE,DIMENSION(:)::ATOR,DNOR,PEPDIR,PGLEN,PGTYP,PGDIR,LOOPLEN,LOOPTYP
+   INTEGER,ALLOCATABLE,DIMENSION(:)::DNORTEMP,ATORTEMP,MAP,BONTYP,MARK
+   INTEGER,ALLOCATABLE,DIMENSION(:,:)::PGID,LOOP,BONDPEP
+   DOUBLE PRECISION,ALLOCATABLE,DIMENSION(:)::X,Y,Z
+
+
+   ALLOCATE(MAP(NATOM),DNORTEMP(NATOM-NDEL),ATORTEMP(NATOM-NDEL))
+
+   NTEMP=0
+
+   DO N=1,NATOM
+      IF(ATOR(N)/=-1)THEN
+         NTEMP=NTEMP+1
+         MAP(N)=NTEMP
+         DNORTEMP(NTEMP)=DNOR(N)
+         ATORTEMP(NTEMP)=ATOR(N)
+         PEPDIR(NTEMP)=PEPDIR(N)
+         X(NTEMP)=X(N)
+         Y(NTEMP)=Y(N)
+         Z(NTEMP)=Z(N)
+
+      END IF
+
+   END DO
+
+   IF(NATOM-NDEL/=NTEMP)THEN
+      PRINT*,'ERROR IN COUNTING DELETED ATOMS IN CLEANUP'
+      STOP
+   END IF
+
+   NATOM=NTEMP
+
+   DO NR=1,NPG
+
+      LENGTH=0
+
+      DO JR=1,PGLEN(NR)
+         IF(ATOR(PGID(JR,NR))==-1)THEN
+            CYCLE
+         END IF
+
+         LENGTH=LENGTH+1
+
+         NA=PGID(JR,NR)
+
+         PGID(LENGTH,NR)=MAP(NA)
+
+      END DO
+
+      PGLEN(NR)=LENGTH
+   END DO
+
+!----------------------------------
+!  CLEAN UP UNCROSSLINKED STRANDS:
+
+   NPGTEMP=0
+
+   DO NR=1,NPG
+
+      IF(PGLEN(NR)==0)THEN
+         CYCLE
+      END IF
+
+      NPGTEMP=NPGTEMP+1
+
+      PGLEN(NPGTEMP)=PGLEN(NR)
+
+      PGTYP(NPGTEMP)=PGTYP(NR)
+
+      PGDIR(NPGTEMP)=PGDIR(NR)
+
+      MARK(NPGTEMP)=MARK(NR)
+
+      PGID(1:PGLEN(NR),NPGTEMP)=PGID(1:PGLEN(NR),NR)
+
+!      IF(MARK(NR)==1.AND.NPGTEMP/=NR)THEN
+!         MARK(NPGTEMP)=1
+!         MARK(NR)=0
+!      END IF
+
+   END DO
+
+   NPG=NPGTEMP
+
+!---------------------------
+   DO NB=1,NBONDPEP
+
+      IF(BONTYP(NB)==0)THEN
+         CYCLE
+      END IF
+
+      BONDPEP(1:2,NB)=MAP(BONDPEP(1:2,NB))
+
+   END DO
+
+!---------------------------
+
+   DO NL=1,NLOOP
+      IF(LOOPTYP(NL)==0)THEN
+         CYCLE
+      END IF
+
+      LENGTH=0
+
+      DO JL=1,LOOPLEN(NL)
+
+         NA=LOOP(JL,NL)
+
+         IF(ATOR(NA)==-1)THEN
+            CYCLE
+         END IF
+
+         IF(LENGTH>0)THEN
+            IF(NA==LOOP(LENGTH,NL))THEN
+               CYCLE
+            END IF
+         END IF
+
+         LENGTH=LENGTH+1
+
+         LOOP(LENGTH,NL)=NA
+
+      END DO
+
+      IF(LOOP(1,NL)==LOOP(LENGTH,NL))THEN
+         LENGTH=LENGTH-1
+      END IF
+
+      LOOPLEN(NL)=LENGTH
+
+      LOOP(1:LENGTH,NL)=MAP(LOOP(1:LENGTH,NL))
+
+   END DO
+
+!----------------------------------
+
+   DNOR(1:NATOM)=DNORTEMP(1:NATOM)
+   ATOR(1:NATOM)=ATORTEMP(1:NATOM)
+
+   DEALLOCATE(MAP,DNORTEMP,ATORTEMP)
+
+   END SUBROUTINE
+                                                                                 
+!============================================
+
+   SUBROUTINE RMPEPBOND(NPG,PGID,PGLEN,MARK,NBONDPEP,NBONDDEL,BONDPEP,BONTYP,DNOR,ATOR,NLOOP,LOOP,LOOPLEN,LOOPTYP)
+
+   IMPLICIT NONE
+
+   INTEGER NPG,NR,NA,NB,NBONDPEP,NBONDDEL,NLOOP,NL,JL,NPICK,LENGTH,JEXIT
+   INTEGER,ALLOCATABLE,DIMENSION(:)::PGLEN,MARK,BONTYP,DNOR,ATOR,LOOPLEN,LOOPTYP
+   INTEGER,ALLOCATABLE,DIMENSION(:,:)::PGID,BONDPEP,LOOP
+
+   DO NR=1,NPG
+
+      IF(MARK(NR)==0)THEN
+         CYCLE
+      END IF
+
+      IF(PGLEN(NR)>1)THEN
+         CYCLE
+      END IF
+
+      NA=PGID(1,NR)
+
+      IF(DNOR(NA)/=0.AND.ATOR(NA)/=0)THEN
+         PRINT*,'ERROR: UNIT NOT CROSSLINKED'
+         STOP
+      END IF
+
+      DO NB=1,NBONDPEP
+
+         IF(BONTYP(NB)==0)THEN
+            CYCLE
+         END IF
+
+         IF(NA==BONDPEP(1,NB).OR.NA==BONDPEP(2,NB))THEN
+            NBONDDEL=NBONDDEL+1
+            BONTYP(NB)=0
+            DNOR(BONDPEP(1:2,NB))=-1
+            ATOR(BONDPEP(1:2,NB))=1
+            EXIT
+         END IF
+
+      END DO
+
+      JEXIT=0
+
+      DO NL=1,NLOOP
+
+         IF(LOOPTYP(NL)==0)THEN
+            CYCLE
+         END IF
+
+         DO JL=1,LOOPLEN(NL)
+
+            IF(LOOP(JL,NL)==NA)THEN
+               NPICK=NL
+               JEXIT=0
+               EXIT
+            END IF
+
+         END DO
+
+         IF(JEXIT==1)THEN
+            EXIT
+         END IF
+
+      END DO
+
+
+      LENGTH=0
+
+      DO JL=1,LOOPLEN(NPICK)
+
+         IF(LOOP(JL,NPICK)==NA)THEN
+            CYCLE
+         END IF
+
+         IF(LENGTH>0)THEN
+            IF(LOOP(JL,NPICK)==LOOP(LENGTH,NPICK))THEN
+               CYCLE
+            END IF
+         END IF
+
+         LENGTH=LENGTH+1
+
+         LOOP(LENGTH,NPICK)=LOOP(JL,NPICK)
+
+      END DO
+
+      IF(LOOP(1,NPICK)==LOOP(LENGTH,NPICK))THEN
+         LENGTH=LENGTH-1
+      END IF
+
+      LOOPLEN(NPICK)=LENGTH
+
+   END DO
+
+   END SUBROUTINE
+
+!============================================
+
+   SUBROUTINE GETLOOP(X0,Y0,Z0,XCEN,YCEN,ZCEN,X,Y,Z,NLOOP,LOOP,LOOPLEN,LOOPTYP,ILOOP)
+
+   IMPLICIT NONE
+
+   INTEGER NLOOP,ILOOP,NL,JCHECK,CHECK,J,N1,N2
+   INTEGER,DIMENSION(:),ALLOCATABLE:: LOOPLEN,LOOPTYP
+   INTEGER,DIMENSION(:,:),ALLOCATABLE:: LOOP
+
+   DOUBLE PRECISION X0,Y0,Z0,XCEN,YCEN,ZCEN,XLOOP,YLOOP,ZLOOP,DIST
+   DOUBLE PRECISION XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3
+   DOUBLE PRECISION,DIMENSION(:),ALLOCATABLE:: X,Y,Z
+
+   DIST=10.0D0
+
+   DO NL=1,NLOOP
+
+      IF(LOOPTYP(NL)==0)THEN
+         CYCLE
+      END IF
+
+      XLOOP=SUM(X(LOOP(1:LOOPLEN(NL),NL)))/LOOPLEN(NL)
+
+      IF(ABS(X0-XLOOP)>DIST)THEN
+         CYCLE
+      END IF
+
+      YLOOP=SUM(Y(LOOP(1:LOOPLEN(NL),NL)))/LOOPLEN(NL)
+
+      IF(ABS(Y0-YLOOP)>DIST)THEN
+         CYCLE
+      END IF
+
+      ZLOOP=SUM(Z(LOOP(1:LOOPLEN(NL),NL)))/LOOPLEN(NL)
+
+      IF(ABS(Z0-ZLOOP)>DIST)THEN
+         CYCLE
+      END IF
+
+!     NOW CHECK THIS LOOP:
+
+      JCHECK=0
+
+      XP3=X(LOOP(1,NL))
+      YP3=Y(LOOP(1,NL))
+      ZP3=Z(LOOP(1,NL))
+
+      XL1=XCEN; YL1=YCEN; ZL1=ZCEN
+
+      XL2=2*X0-XCEN
+      YL2=2*Y0-YCEN
+      ZL2=2*Z0-ZCEN
+
+      DO J=2,LOOPLEN(NL)-1
+
+         N1=LOOP(J,NL)
+
+         N2=LOOP(J+1,NL)
+
+         IF(LOOP(1,NL)==N1.OR.LOOP(1,NL)==N2)THEN
+            CYCLE
+         END IF
+
+         XP1=X(N1); YP1=Y(N1); ZP1=Z(N1)
+
+         XP2=X(N2); YP2=Y(N2); ZP2=Z(N2)
+
+         CALL INTERSEC(CHECK,XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3)
+
+         IF(CHECK==1)THEN
+            JCHECK=JCHECK+1
+         END IF
+
+      END DO
+
+      IF(MOD(JCHECK,2)==1)THEN
+         ILOOP=NL
+         EXIT
+      ENDIF
+
+   END DO
+
+
+
+   END SUBROUTINE
+
+!============================================
+
+   SUBROUTINE CLEAVEPEP(NATOM,X,Y,Z,DNOR,ATOR,XCEN,YCEN,ZCEN,ILOOP,NLOOP,NLOOPDEL,LOOP,LOOPLEN,LOOPTYP, &
+                        NBONDPEP,NBONDDEL,BONDPEP,BONTYP)
+
+   IMPLICIT NONE
+
+   INTEGER NATOM,NLOOP,NLOOPDEL,NBONDPEP,NBONDDEL,ILOOP
+   INTEGER NPICK,JL,N1,N2,JGET,JSTOP,NB,JPLUS,JSTART,LOLEN,CHECK,IPICK,J,NL
+   INTEGER J1,J2,JA1,JA2,LEN1,LEN2
+
+   INTEGER, ALLOCATABLE, DIMENSION(:):: DNOR,ATOR,LOOPLEN,LOOPTYP,BONTYP,LOOPTEMP,PART1,PART2
+   INTEGER, ALLOCATABLE, DIMENSION(:,:):: LOOP,BONDPEP
+
+   DOUBLE PRECISION XCEN,YCEN,ZCEN
+   DOUBLE PRECISION XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:):: X,Y,Z
+
+
+20 JGET=0
+
+   XP1=XCEN; YP1=YCEN; ZP1=ZCEN
+
+   XP2=2*X(NATOM-1)-XCEN
+   YP2=2*Y(NATOM-1)-YCEN
+   ZP2=2*Z(NATOM-1)-ZCEN
+
+   XP3=2*X(NATOM)-XCEN
+   YP3=2*Y(NATOM)-YCEN
+   ZP3=2*Z(NATOM)-ZCEN
+
+   DO JL=1,LOOPLEN(ILOOP)
+
+      N1=LOOP(JL,ILOOP)
+
+      IF(JL==LOOPLEN(ILOOP))THEN
+         N2=LOOP(1,ILOOP)
+      ELSE
+         N2=LOOP(JL+1,ILOOP)
+      END IF
+
+      IF(N1==NATOM.OR.N1==NATOM-1.OR.N2==NATOM.OR.N2==NATOM-1)THEN
+         CYCLE
+      END IF
+
+      NPICK=0
+
+      DO NB=1,NBONDPEP
+
+         IF(BONTYP(NB)/=1)THEN
+            CYCLE
+         END IF
+
+         IF(BONDPEP(1,NB)==N1.AND.BONDPEP(2,NB)==N2)THEN
+            NPICK=NB
+            EXIT
+         END IF
+
+         IF(BONDPEP(1,NB)==N2.AND.BONDPEP(2,NB)==N1)THEN
+            NPICK=NB
+            EXIT
+         END IF
+
+      END DO
+
+      IF(NPICK==0)THEN
+         CYCLE
+      END IF
+
+      XL1=X(N1); YL1=Y(N1); ZL1=Z(N1)
+
+      XL2=X(N2); YL2=Y(N2); ZL2=Z(N2)
+
+      CALL INTERSEC(CHECK,XL1,YL1,ZL1,XL2,YL2,ZL2,XP1,YP1,ZP1,XP2,YP2,ZP2,XP3,YP3,ZP3)
+
+      IF(CHECK==1)THEN
+         JGET=1
+         EXIT
+      END IF
+
+   END DO
+
+   IF(JGET==0)THEN
+      RETURN
+   END IF
+
+!--------------------
+   IF(DNOR(N1)==0)THEN
+      DNOR(N1)=-1
+      ATOR(N2)=1
+   ELSE
+      DNOR(N2)=-1
+      ATOR(N1)=1
+   END IF
+
+
+   BONTYP(NPICK)=0
+   NBONDDEL=NBONDDEL+1
+
+!  LOOK FOR THE ASSOCIATED LOOP:
+
+   JSTOP=0
+
+   DO NL=1,NLOOP
+
+      IF(LOOPTYP(NL)==0)THEN
+         CYCLE
+      END IF
+
+      DO JL=1,LOOPLEN(NL)
+
+         JPLUS=JL+1
+
+         IF(JL==LOOPLEN(NL))THEN
+            JPLUS=1
+         END IF
+
+         IF(LOOP(JL,NL)==N2.AND.LOOP(JPLUS,NL)==N1)THEN
+            IPICK=NL
+            JSTOP=1
+            EXIT
+         END IF
+
+      END DO
+
+      IF(JSTOP==1)THEN
+         EXIT
+      END IF
+
+   END DO
+
+!  CLEAVING WITHIN THE LOOP:
+
+   IF(IPICK==ILOOP)THEN
+
+      LOLEN=LOOPLEN(ILOOP)
+
+      J1=0; J2=0
+
+      DO JL=1,LOLEN
+
+         JA1=LOOP(JL,ILOOP)
+
+         IF(JL==LOLEN)THEN
+            JA2=LOOP(1,ILOOP)
+         ELSE
+            JA2=LOOP(JL+1,ILOOP)
+         END IF
+
+         IF(JA1==N2.AND.JA2==N1)THEN
+
+            IF(JL==LOLEN)THEN
+               J1=1
+            ELSE
+               J1=JL+1
+            END IF
+
+         END IF
+
+         IF(JA1==N1.AND.JA2==N2)THEN
+
+            IF(JL==LOLEN)THEN
+               J2=1
+            ELSE
+               J2=JL+1
+            END IF
+
+         END IF
+
+      END DO
+
+      IF(J1==0.OR.J2==0)THEN
+         PRINT*,'COULD NOT FIND LOOP INDICES'
+         STOP
+      END IF
+
+      ALLOCATE(PART1(LOLEN),PART2(LOLEN))
+
+      LEN1=0
+
+      DO JL=1,LOLEN
+
+         J=JL+J1-1
+
+         IF(J>LOLEN)THEN
+            J=J-LOLEN
+         END IF
+
+         LEN1=LEN1+1
+
+         PART1(LEN1)=LOOP(J,ILOOP)
+
+         IF(PART1(LEN1)==N2)THEN
+            LEN1=LEN1-2
+            EXIT
+         END IF
+
+      END DO
+
+      LEN2=0
+
+      DO JL=1,LOLEN
+
+         J=JL+J2-1
+
+         IF(J>LOLEN)THEN
+            J=J-LOLEN
+         END IF
+
+         LEN2=LEN2+1
+
+         PART2(LEN2)=LOOP(J,ILOOP)
+
+         IF(PART2(LEN2)==N1)THEN
+            LEN2=LEN2-2
+            EXIT
+         END IF
+
+      END DO
+
+      IF(LEN1>LEN2)THEN
+         LOOP(1:LEN1,ILOOP)=PART1(1:LEN1)
+         LOOPLEN(ILOOP)=LEN1
+      ELSE
+         LOOP(1:LEN2,ILOOP)=PART2(1:LEN2)
+         LOOPLEN(ILOOP)=LEN2
+      END IF
+
+      DEALLOCATE(PART1,PART2)
+
+      GOTO 20
+   END IF
+
+!-----------------------------
+
+
+   NLOOPDEL=NLOOPDEL+2
+
+   LOOPTYP(ILOOP)=0
+   LOOPTYP(IPICK)=0
+
+   NLOOP=NLOOP+1
+   LOOPTYP(NLOOP)=1
+
+   DO J=1,LOOPLEN(ILOOP)
+
+      JPLUS=J+1
+
+      IF(J==LOOPLEN(ILOOP))THEN
+         JPLUS=1
+      END IF
+
+      IF(LOOP(J,ILOOP)==N1.AND.LOOP(JPLUS,ILOOP)==N2)THEN
+         JSTART=JPLUS
+         EXIT
+      END IF
+
+   END DO
+
+   LOLEN=0
+
+   ALLOCATE(LOOPTEMP(LOOPLEN(ILOOP)+LOOPLEN(IPICK)-2))
+
+   DO J=1,LOOPLEN(ILOOP)
+
+      JL=J+JSTART-1
+
+      IF(JL>LOOPLEN(ILOOP))THEN
+         JL=JL-LOOPLEN(ILOOP)
+      END IF
+
+      LOLEN=LOLEN+1
+
+      LOOPTEMP(LOLEN)=LOOP(JL,ILOOP)
+
+   END DO
+
+   DO J=1,LOOPLEN(IPICK)
+
+      JPLUS=J+1
+
+      IF(J==LOOPLEN(IPICK))THEN
+         JPLUS=1
+      END IF
+
+      IF(LOOP(J,IPICK)==N2.AND.LOOP(JPLUS,IPICK)==N1)THEN
+         JSTART=JPLUS
+         EXIT
+      END IF
+
+   END DO
+
+   DO J=2,LOOPLEN(IPICK)-1
+
+      JL=J+JSTART-1
+
+      IF(JL>LOOPLEN(IPICK))THEN
+         JL=JL-LOOPLEN(IPICK)
+      END IF
+
+      LOLEN=LOLEN+1
+
+      LOOPTEMP(LOLEN)=LOOP(JL,IPICK)
+
+   END DO
+
+   LOOP(1:LOLEN,NLOOP)=LOOPTEMP(1:LOLEN)
+
+   LOOPLEN(NLOOP)=LOLEN
+
+   DEALLOCATE(LOOPTEMP)
+
+   ILOOP=NLOOP
+
+
+   GOTO 20
+
+
+   END SUBROUTINE
+
+
+!============================================
+
+   SUBROUTINE LINKING(ND,JD,NLINK,DNOR,ATOR,PEPDIR,UX,UY,UZ,XCEN,YCEN,ZCEN,RADIUS,X,Y,Z,ILOOP,LOOP,LOOPLEN)
+
+   IMPLICIT NONE
+
+   INTEGER ND,JD,NLINK,ILOOP,JL,NA
+   INTEGER, ALLOCATABLE, DIMENSION(:)::LOOPLEN,DNOR,ATOR,PEPDIR
+   INTEGER, ALLOCATABLE, DIMENSION(:,:)::LOOP
+   DOUBLE PRECISION UX,UY,UZ,XCEN,YCEN,ZCEN
+   DOUBLE PRECISION DX,DY,DZ,XP,YP,ZP,XREP,YREP,ZREP,ARG,DIST,RADIUS
+   DOUBLE PRECISION, ALLOCATABLE, DIMENSION(:):: X,Y,Z
+
+   NLINK=0
+
+   IF(DNOR(ND)==0.OR.ATOR(ND)==0)THEN
+      RETURN
+   END IF
+
+   DO JL=1,LOOPLEN(ILOOP)
+
+      NA=LOOP(JL,ILOOP)
+
+      IF(DNOR(NA)==0.OR.ATOR(NA)==0.OR.(DNOR(NA)==1.AND.ATOR(NA)==1))THEN
+         CYCLE
+      END IF
+
+      IF(PEPDIR(NA)==PEPDIR(ND))THEN
+         CYCLE
+      END IF
+
+      DX=X(NA)-X(ND)
+      DY=Y(NA)-Y(ND)
+      DZ=Z(NA)-Z(ND)
+
+      ARG=DX*UX+DY*UY+DZ*UZ
+
+      IF(ARG*PEPDIR(NA)>0)THEN
+         CYCLE
+      END IF
+
+      ARG=(X(NA)-XCEN)*UX+(Y(NA)-YCEN)*UY+(Z(NA)-ZCEN)*UZ
+
+      XP=XCEN+ARG*UX
+      YP=YCEN+ARG*UY
+      ZP=ZCEN+ARG*UZ
+
+      DX=X(NA)-XP
+      DY=Y(NA)-YP
+      DZ=Z(NA)-ZP
+
+      DIST=SQRT(DX*DX+DY*DY+DZ*DZ)
+
+      XREP=XP+DX*RADIUS/DIST
+      YREP=YP+DY*RADIUS/DIST
+      ZREP=ZP+DZ*RADIUS/DIST
+
+      DX=XREP-X(ND)
+      DY=YREP-Y(ND)
+      DZ=ZREP-Z(ND)
+
+      DIST=SQRT(DX*DX+DY*DY+DZ*DZ)
+
+      IF(DIST<2.50D0)THEN
+         NLINK=NA
+         EXIT
+      END IF
+
+      IF(DIST<3.0D0.AND.JD==1)THEN
+         NLINK=NA
+         EXIT
+      END IF
+
+   END DO
+
+   END SUBROUTINE
+
+!============================================
+
+   SUBROUTINE POSTLINK(NATOM,ND,NLINK,DNOR,ATOR,NLOOP,NLOOPDEL,ILOOP,LOOP,LOOPLEN,LOOPTYP, &
+                       NPG,PGID,PGLEN,NBONDPEP,NBONDDEL,BONDPEP,BONTYP,PEPDIR,NBONDGLY,BONDGLY)
+
+   IMPLICIT NONE
+
+   INTEGER NATOM,ND,NLINK,NLOOP,NLOOPDEL,ILOOP,NPG,NBONDPEP,NBONDDEL,JR,NA1,NA2,NBONDGLY
+   INTEGER NSTART1,NSTART2,NSTOP1,NSTOP2,LOLEN,J1,J2,CHECK,N1,N2,JL,LEN1,LEN2,J
+   INTEGER JDEL,NLO1,NLO2
+   INTEGER PATH1(100),PATH2(100)
+
+   INTEGER, ALLOCATABLE, DIMENSION(:)::LOOPLEN,LOOPTYP,PGLEN,BONTYP,ATOR,DNOR
+   INTEGER, ALLOCATABLE, DIMENSION(:,:)::LOOP,PGID,BONDPEP,BONDGLY
+   INTEGER, ALLOCATABLE, DIMENSION(:)::PEPDIR
+
+
+   NA1=ND
+   NA2=NLINK
+
+   NBONDPEP=NBONDPEP+1
+
+   BONTYP(NBONDPEP)=2
+
+   BONDPEP(1,NBONDPEP)=NA1
+
+   BONDPEP(2,NBONDPEP)=NA2
+
+   DNOR(NA1)=0
+
+   ATOR(NA2)=0
+
+!-------------------
+
+   NSTART1=NA1
+
+   NSTOP1=NA2
+
+   NSTART2=NA2
+
+   NSTOP2=NA1
+
+   CALL SEARCHPATH(NATOM,ILOOP,LOOP,LOOPLEN,NBONDGLY,BONDGLY,NBONDPEP,BONDPEP,BONTYP,NSTART1,NSTOP1,PATH1,LEN1)
+
+   IF(LEN1==0)THEN
+      RETURN
+   END IF
+
+   CALL SEARCHPATH(NATOM,ILOOP,LOOP,LOOPLEN,NBONDGLY,BONDGLY,NBONDPEP,BONDPEP,BONTYP,NSTART2,NSTOP2,PATH2,LEN2)
+
+   IF(LEN2==0)THEN
+      RETURN
+   END IF
+
+!  NA1 AND NA2 ARE IN DIFFERENT ROLES:
+
+   NA1=PATH1(LEN1)
+
+   NA2=PATH2(LEN2)
+
+   J1=0
+   J2=0
+
+   DO JL=1,LOOPLEN(ILOOP)
+
+      IF(LOOP(JL,ILOOP)==NA1)THEN
+         J1=JL
+      ELSEIF(LOOP(JL,ILOOP)==NA2)THEN
+         J2=JL
+      END IF
+
+   END DO
+
+   IF(J1==0.OR.J2==0)THEN
+      PRINT*,'CHECK ERROR'
+      PRINT*,'PATH 1',LEN1,PATH1(1:LEN1)
+      PRINT*,'PATH 2',LEN2,PATH2(1:LEN2)
+      PRINT*,'LOOP',LOOP(1:LOOPLEN(ILOOP),ILOOP)
+
+      BONTYP(NBONDPEP)=0
+      NBONDDEL=NBONDDEL+1
+
+      STOP
+   END IF
+
+!  THE FIRST LOOP:
+
+   NLOOP=NLOOP+1
+
+   LOOPTYP(NLOOP)=1
+
+   LOLEN=LEN1
+
+   LOOP(1:LOLEN,NLOOP)=PATH1(1:LEN1)
+
+   JDEL=J2-J1
+
+   IF(JDEL<0)THEN
+      JDEL=JDEL+LOOPLEN(ILOOP)
+   END IF
+
+   DO J=1,JDEL-1
+
+      JL=J+J1
+
+      IF(JL>LOOPLEN(ILOOP))THEN
+         JL=JL-LOOPLEN(ILOOP)
+      END IF
+
+      LOLEN=LOLEN+1
+
+      LOOP(LOLEN,NLOOP)=LOOP(JL,ILOOP)
+
+   END DO
+
+   DO J=LEN2,1,-1
+
+      LOLEN=LOLEN+1
+
+      LOOP(LOLEN,NLOOP)=PATH2(J)
+
+   END DO
+
+   LOOPLEN(NLOOP)=LOLEN
+
+!  THE SECOND LOOP, ALSO THE NEW SYNLOOP:
+
+   NLOOP=NLOOP+1
+
+   LOOPTYP(NLOOP)=1
+
+   LOLEN=LEN2
+
+   LOOP(1:LOLEN,NLOOP)=PATH2(1:LEN2)
+
+   JDEL=J1-J2
+
+   IF(JDEL<0)THEN
+      JDEL=JDEL+LOOPLEN(ILOOP)
+   END IF
+
+   DO J=1,JDEL-1
+
+      JL=J+J2
+
+      IF(JL>LOOPLEN(ILOOP))THEN
+         JL=JL-LOOPLEN(ILOOP)
+      END IF
+
+      LOLEN=LOLEN+1
+
+      LOOP(LOLEN,NLOOP)=LOOP(JL,ILOOP)
+
+   END DO
+
+   DO J=LEN1,1,-1
+
+      LOLEN=LOLEN+1
+
+      LOOP(LOLEN,NLOOP)=PATH1(J)
+
+   END DO
+
+   LOOPLEN(NLOOP)=LOLEN
+
+!  DELETE ILOOP:
+
+   NLOOPDEL=NLOOPDEL+1
+
+   LOOPTYP(ILOOP)=0
+
+!-------------------------------------------------------
+!  DETERMINE THE ACTIVE LOOP
+
+
+   DO JR=PGLEN(NPG),1,-1
+      IF(DNOR(PGID(JR,NPG))==0)THEN
+         N1=PGID(JR,NPG)
+         EXIT
+      END IF
+
+   END DO
+
+   N2=N1-1
+
+
+   CHECK=0
+
+   DO JL=1,LOOPLEN(NLOOP)
+
+      NLO1=LOOP(JL,NLOOP)
+
+      IF(JL==LOOPLEN(NLOOP))THEN
+         NLO2=LOOP(1,NLOOP)
+      ELSE
+         NLO2=LOOP(JL+1,NLOOP)
+      END IF
+
+      IF(NLO1==N1.AND.NLO2==N2)THEN
+         CHECK=1
+      END IF
+
+      IF(NLO1==N2.AND.NLO2==N1)THEN
+         CHECK=-1
+      END IF
+
+   END DO
+
+   IF(CHECK==0)THEN
+      ILOOP=NLOOP-1
+
+   ELSEIF(CHECK*PEPDIR(N1)>0)THEN
+      ILOOP=NLOOP
+   ELSE
+      ILOOP=NLOOP-1
+   END IF
+
+   END SUBROUTINE
+
+!=====================================================================
+
+   SUBROUTINE DIVIDELASTLOOP(NATOM,NA1,NA2,ILOOP,NLOOP,LOOP,LOOPLEN,LOOPTYP,NLOOPDEL, &
+                             NBONDPEP,NBONDDEL,BONDPEP,BONTYP,NBONDGLY,BONDGLY)
+
+
+   IMPLICIT NONE
+
+   INTEGER NATOM,NLOOP,NLOOPDEL,ILOOP,NA1,NA2,NBONDGLY,NBONDPEP,J,NBONDDEL
+   INTEGER NSTART1,NSTART2,NSTOP1,NSTOP2,LOLEN,J1,J2,JL,LEN1,LEN2,JDEL
+   INTEGER PATH1(100),PATH2(100)
+
+   INTEGER,ALLOCATABLE,DIMENSION(:)::LOOPLEN,LOOPTYP,BONTYP
+   INTEGER,ALLOCATABLE,DIMENSION(:,:)::LOOP,BONDPEP,BONDGLY
+
+   NSTART1=NA1
+
+   NSTOP1=NA2
+
+   NSTART2=NA2
+
+   NSTOP2=NA1
+
+   CALL SEARCHPATH(NATOM,ILOOP,LOOP,LOOPLEN,NBONDGLY,BONDGLY,NBONDPEP,BONDPEP,BONTYP,NSTART1,NSTOP1,PATH1,LEN1)
+
+   IF(LEN1==0)THEN
+      print*,'error: path 1 not found'
+      stop
+   END IF
+
+   CALL SEARCHPATH(NATOM,ILOOP,LOOP,LOOPLEN,NBONDGLY,BONDGLY,NBONDPEP,BONDPEP,BONTYP,NSTART2,NSTOP2,PATH2,LEN2)
+
+   IF(LEN2==0)THEN
+      print*,'error: path 2 not found'
+      stop
+   END IF
+
+!  NA1 AND NA2 ARE IN DIFFERENT ROLES:
+
+   NA1=PATH1(LEN1)
+
+   NA2=PATH2(LEN2)
+
+   J1=0
+   J2=0
+
+   DO JL=1,LOOPLEN(ILOOP)
+
+      IF(LOOP(JL,ILOOP)==NA1)THEN
+         J1=JL
+      ELSEIF(LOOP(JL,ILOOP)==NA2)THEN
+         J2=JL
+      END IF
+
+   END DO
+
+   IF(J1==0.OR.J2==0)THEN
+      PRINT*,'CHECK ERROR'
+      PRINT*,'PATH 1',LEN1,PATH1(1:LEN1)
+      PRINT*,'PATH 2',LEN2,PATH2(1:LEN2)
+      PRINT*,'LOOP',LOOP(1:LOOPLEN(ILOOP),ILOOP)
+
+      BONTYP(NBONDPEP)=0
+      NBONDDEL=NBONDDEL+1
+
+      STOP
+   END IF
+
+!  THE FIRST LOOP:
+
+   NLOOP=NLOOP+1
+
+   LOOPTYP(NLOOP)=1
+
+   LOLEN=LEN1
+
+   LOOP(1:LOLEN,NLOOP)=PATH1(1:LEN1)
+
+   JDEL=J2-J1
+
+   IF(JDEL<0)THEN
+      JDEL=JDEL+LOOPLEN(ILOOP)
+   END IF
+
+   DO J=1,JDEL-1
+
+      JL=J+J1
+
+      IF(JL>LOOPLEN(ILOOP))THEN
+         JL=JL-LOOPLEN(ILOOP)
+      END IF
+
+      LOLEN=LOLEN+1
+
+      LOOP(LOLEN,NLOOP)=LOOP(JL,ILOOP)
+
+   END DO
+
+   DO J=LEN2,1,-1
+
+      LOLEN=LOLEN+1
+
+      LOOP(LOLEN,NLOOP)=PATH2(J)
+
+   END DO
+
+   LOOPLEN(NLOOP)=LOLEN
+
+!  THE SECOND LOOP, ALSO THE NEW SYNLOOP:
+
+   NLOOP=NLOOP+1
+
+   LOOPTYP(NLOOP)=1
+
+   LOLEN=LEN2
+
+   LOOP(1:LOLEN,NLOOP)=PATH2(1:LEN2)
+
+   JDEL=J1-J2
+
+   IF(JDEL<0)THEN
+      JDEL=JDEL+LOOPLEN(ILOOP)
+   END IF
+
+   DO J=1,JDEL-1
+
+      JL=J+J2
+
+      IF(JL>LOOPLEN(ILOOP))THEN
+         JL=JL-LOOPLEN(ILOOP)
+      END IF
+
+      LOLEN=LOLEN+1
+
+      LOOP(LOLEN,NLOOP)=LOOP(JL,ILOOP)
+
+   END DO
+
+   DO J=LEN1,1,-1
+
+      LOLEN=LOLEN+1
+
+      LOOP(LOLEN,NLOOP)=PATH1(J)
+
+   END DO
+
+   LOOPLEN(NLOOP)=LOLEN
+
+!  DELETE ILOOP:
+
+   NLOOPDEL=NLOOPDEL+1
+
+   LOOPTYP(ILOOP)=0
+
+
+   END SUBROUTINE
+
+!==================================================================
+
+   SUBROUTINE DIVIDELOOP(ILOOP,NL1,NL2,NLOOP,NLOOPDEL,LOOP,LOOPLEN,LOOPTYP,NBONDPEP,BONDPEP,BONTYP,DNOR,ATOR)
+
+   IMPLICIT NONE
+
+   INTEGER ILOOP,NLOOP,NL1,NL2,NLOOPDEL,NBONDPEP,N1,N2,LEN1,LEN2,JSWITCH,JL
+   INTEGER,DIMENSION(:,:),ALLOCATABLE::LOOP,BONDPEP
+   INTEGER,DIMENSION(:),ALLOCATABLE::LOOPLEN,LOOPTYP,BONTYP,ATOR,DNOR
+
+
+   N1=NLOOP+1
+   LEN1=0
+
+   N2=NLOOP+2
+   LEN2=0
+
+   JSWITCH=1
+
+   DO JL=1,LOOPLEN(ILOOP)
+
+      IF(JSWITCH==1)THEN
+         LEN1=LEN1+1
+         LOOP(LEN1,N1)=LOOP(JL,ILOOP)
+      ELSE
+         LEN2=LEN2+1
+         LOOP(LEN2,N2)=LOOP(JL,ILOOP)
+      END IF
+
+      IF(LOOP(JL,ILOOP)==NL1.OR.LOOP(JL,ILOOP)==NL2)THEN
+         JSWITCH=-JSWITCH
+
+         IF(JSWITCH==1)THEN
+            LEN1=LEN1+1
+            LOOP(LEN1,N1)=LOOP(JL,ILOOP)
+         ELSE
+            LEN2=LEN2+1
+            LOOP(LEN2,N2)=LOOP(JL,ILOOP)
+         END IF
+
+      END IF
+
+   END DO
+
+   LOOPLEN(N1)=LEN1
+   LOOPTYP(N1)=1
+   LOOPLEN(N2)=LEN2
+   LOOPTYP(N2)=1
+
+   LOOPTYP(ILOOP)=0
+
+   NLOOP=NLOOP+2
+   NLOOPDEL=NLOOPDEL+1
+
+   NBONDPEP=NBONDPEP+1
+
+   BONTYP(NBONDPEP)=1
+
+   BONDPEP(1,NBONDPEP)=NL1
+   BONDPEP(2,NBONDPEP)=NL2
+
+   DNOR(NL1)=0
+   ATOR(NL1)=1
+
+   DNOR(NL2)=-1
+   ATOR(NL2)=0
+
+   END SUBROUTINE
+
+!==================================================================
+
+
+
+!==========================================
+!==========================================
+!==========================================
+
+END MODULE

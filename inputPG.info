@@ -1,0 +1,59 @@
+#################################
+# Pick a job:
+# 1. Sacculus Creation
+# 2. Sacculus Growth
+# 3. Sacculus Division
+
+JOBID
+2
+
+#################################
+
+# Setting Sacculus creation:
+
+!THE NUMBER OF CYLINDRICAL HOOPS:
+NCYL
+64
+ 
+!THE NUMBER OF GLYCAN UNITS PER CYLINDRICAL HOOP:
+NUNIT
+100
+
+!THE AVERAGE NUMBER OF GLYCAN UNITS PER STRAND:
+LAVE
+12
+
+#################################
+
+# Setting for Sacculus Growth
+#  SELECT GROWTH MODE
+#  0 for uncomplexed enzymes model
+#  1 for multi-enzyme complex model
+#  2 for addition of "peptide capture"
+#  3 for addition of "bend-induced termination"
+#  4 for addition of "transglycosylase orientation"
+#  5 for addition of "endopeptidase-transglycosylase coordination"
+#  6 for addition of "tail hydrolysis"
+#  7 for addition of "untwisted strand"
+#  8 for addition of "peptide maturation"
+#  9 for addition of "crosslink-dependent processivity"
+#  10 for addition of "start on left"
+#  11 for addition of "hole-dependent processivity"
+#  12 for addition of "paired-strand insertion"
+
+GMODE
+2
+
+#################################
+
+# Setting for Sacculus Division
+
+# Pick one of the daughters to be created
+
+LEFTCELL
+1
+
+RITECELL
+0
+
+
